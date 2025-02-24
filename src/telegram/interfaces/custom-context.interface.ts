@@ -1,15 +1,16 @@
-// src/telegram/interfaces/custom-context.interface/custom-context.interface.interface.ts
+// src/telegram/interfaces/custom-context.interface.ts
 import { Context, Scenes } from 'telegraf';
 
 export interface WizardState {
-  step?: number; // Define the step property
+  step?: number;
 }
 
 export interface WizardSessionData extends Scenes.WizardSessionData {
   cursor: number;
-  // Add other custom properties here
 }
 
-export interface CustomContext extends Context, Scenes.WizardContext<WizardSessionData> {
-  wizard: Scenes.WizardContextWizard<CustomContext> & { state: WizardState }; // Add the state property
+export interface CustomContext extends Context, Omit<Scenes.WizardContext<WizardSessionData>, 'scene'> {
+  scene: Scenes.SceneContextScene<CustomContext, WizardSessionData>;
+  wizard: Scenes.WizardContextWizard<CustomContext> & { state: WizardState };
+  toast: (message: string) => Promise<void>; // Add toast method
 }

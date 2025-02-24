@@ -16,7 +16,21 @@ export class TelegramService implements OnModuleInit {
     this.bot = new Telegraf<CustomContext>(
       this.configService.get<string>('TELEGRAM_BOT_TOKEN') || '',
     );
+    // Add middleware to handle toast
+    this.bot.use(async (ctx: CustomContext, next) => {
+      ctx.toast = async (message: string) => {
+        if (ctx.callbackQuery) {
+          try {
+            await ctx.answerCbQuery(message, { show_alert: false });
+          } catch (error) {
+            console.error('Toast error:', error);
+          }
+        }
+      };
+      await next();
+    });
   }
+  
 
   async onModuleInit() {
     // Use session middleware and stage for wizard scenes

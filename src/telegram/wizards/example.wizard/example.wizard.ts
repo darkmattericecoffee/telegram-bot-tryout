@@ -29,7 +29,7 @@ async function step2(ctx: CustomContext) {
 async function step3(ctx: CustomContext) {
   (ctx.wizard.state as WizardState).step = 3;
   await responseComponent(ctx);
-  await ctx.reply('Wizard completed. Returning to Main Menu.');
+  await ctx.toast('Wizard completed. Returning to Main Menu.'); // Toast instead of reply
   return ctx.scene.leave();
 }
 
@@ -50,26 +50,25 @@ export const exampleWizard = new Scenes.WizardScene<CustomContext>(
 
 // Picker callbacks in step 1
 exampleWizard.action('picker_option_1', async (ctx) => {
-  await ctx.reply('You picked Option 1 in the picker component.');
-  // Move to step 2 by calling step2 directly
+  await ctx.toast('Selected Option 1'); // Toast instead of reply
   return step2(ctx);
 });
 
 exampleWizard.action('picker_option_2', async (ctx) => {
-  await ctx.reply('You picked Option 2 in the picker component.');
+  await ctx.toast('Selected Option 2'); // Toast instead of reply
   return step2(ctx);
 });
 
-// Option callbacks in step 2
 exampleWizard.action('route_a', async (ctx) => {
-  await ctx.reply('You chose Route A.');
+  await ctx.toast('Route A chosen'); // Toast instead of reply
   return step3(ctx);
 });
 
 exampleWizard.action('route_b', async (ctx) => {
-  await ctx.reply('You chose Route B.');
+  await ctx.toast('Route B chosen'); // Toast instead of reply
   return step3(ctx);
 });
+
 
 // "Go Back" action – works in both the wizard and outside it.
 exampleWizard.action('go_back', async (ctx) => {
