@@ -4,9 +4,13 @@ import { TelegramService } from './telegram.service';
 import { MenusModule } from './menus/menus.module';
 import { WizardsModule } from './wizards/wizards.module';
 import { ComponentsModule } from './components/components.module';
+import { CoinSearchService } from './services/coin-search.service';
+import { MultiPickerComponent } from './components/multi-picker.component';
+import { OptionsService } from './services/options.service';
+import { ChartImageService } from './services/chart-image.service';
 
 @Module({
-  providers: [TelegramService],
+  providers: [TelegramService, CoinSearchService, MultiPickerComponent, OptionsService, ChartImageService],
   exports: [TelegramService],
   imports: [MenusModule, WizardsModule, ComponentsModule],
 })
