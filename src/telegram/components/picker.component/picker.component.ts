@@ -1,27 +1,32 @@
-// src/telegram/components/picker.component/picker.component.ts
 import { Markup } from 'telegraf';
 import { CustomContext } from 'src/telegram/interfaces/custom-context.interface';
+import { createGoBackButton } from 'src/telegram/constants/buttons.constant';
 
-export async function pickerComponent(ctx: CustomContext) {
-  const messageText = 'Please pick an option:';
+export interface PickerConfig {
+  text: string;
+  options: { label: string; action: string }[];
+}
+
+export async function pickerComponent(ctx: CustomContext, config: PickerConfig) {
   const keyboard = Markup.inlineKeyboard([
-    Markup.button.callback('Option 1', 'picker_option_1'),
-    Markup.button.callback('Option 2', 'picker_option_2'),
-    Markup.button.callback('Go Back', 'go_back')
+    ...config.options.map((option) =>
+      Markup.button.callback(option.label, option.action)
+    ),
+    createGoBackButton(), // Add the "Go Back" button
   ]);
 
   if (ctx.callbackQuery) {
     try {
-      await ctx.editMessageText(messageText, {
+      await ctx.editMessageText(config.text, {
         reply_markup: keyboard.reply_markup,
       });
     } catch (error) {
-      await ctx.reply(messageText, {
+      await ctx.reply(config.text, {
         reply_markup: keyboard.reply_markup,
       });
     }
   } else {
-    await ctx.reply(messageText, {
+    await ctx.reply(config.text, {
       reply_markup: keyboard.reply_markup,
     });
   }

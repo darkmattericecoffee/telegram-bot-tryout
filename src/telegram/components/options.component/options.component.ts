@@ -1,27 +1,32 @@
-// src/telegram/components/options.component/options.component.ts
 import { Markup } from 'telegraf';
 import { CustomContext } from 'src/telegram/interfaces/custom-context.interface';
+import { createGoBackButton } from 'src/telegram/constants/buttons.constant';
 
-export async function optionsComponent(ctx: CustomContext) {
-  const messageText = 'Choose an action:';
+export interface OptionsConfig {
+  text: string;
+  buttons: { label: string; action: string }[];
+}
+
+export async function optionsComponent(ctx: CustomContext, config: OptionsConfig) {
   const keyboard = Markup.inlineKeyboard([
-    Markup.button.callback('Route A', 'route_a'),
-    Markup.button.callback('Route B', 'route_b'),
-    Markup.button.callback('Go Back', 'go_back')
+    ...config.buttons.map((button) =>
+      Markup.button.callback(button.label, button.action)
+    ),
+    createGoBackButton(), // Add the "Go Back" button
   ]);
 
   if (ctx.callbackQuery) {
     try {
-      await ctx.editMessageText(messageText, {
+      await ctx.editMessageText(config.text, {
         reply_markup: keyboard.reply_markup,
       });
     } catch (error) {
-      await ctx.reply(messageText, {
+      await ctx.reply(config.text, {
         reply_markup: keyboard.reply_markup,
       });
     }
   } else {
-    await ctx.reply(messageText, {
+    await ctx.reply(config.text, {
       reply_markup: keyboard.reply_markup,
     });
   }

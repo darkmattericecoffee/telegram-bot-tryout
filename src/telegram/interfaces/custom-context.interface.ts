@@ -3,6 +3,7 @@ import { Context, Scenes } from 'telegraf';
 
 export interface WizardState {
   step?: number;
+  parameters: Record<string, any>; // Store collected parameters
 }
 
 export interface WizardSessionData extends Scenes.WizardSessionData {

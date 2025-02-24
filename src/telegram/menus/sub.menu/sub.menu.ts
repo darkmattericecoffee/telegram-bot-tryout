@@ -1,12 +1,12 @@
-// src/telegram/menus/sub.menu.ts
 import { Markup } from 'telegraf';
 import { CustomContext } from 'src/telegram/interfaces/custom-context.interface';
+import { createGoBackButton } from 'src/telegram/constants/buttons.constant';
 
 export async function showSubMenu(ctx: CustomContext) {
   const messageText = 'Sub Menu';
   const keyboard = Markup.inlineKeyboard([
     Markup.button.callback('Start Wizard', 'start_wizard'),
-    Markup.button.callback('Go Back', 'go_back')
+    createGoBackButton(), // Use the reusable button
   ]);
 
   if (ctx.callbackQuery) {
