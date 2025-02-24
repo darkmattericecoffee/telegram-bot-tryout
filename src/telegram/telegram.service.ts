@@ -1,9 +1,12 @@
 // src/telegram/telegram.service.ts
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Telegraf } from 'telegraf';
-import { CustomContext } from './interfaces/custom-context.interface/custom-context.interface.interface';
+import { Telegraf, session, Scenes } from 'telegraf';
+import { CustomContext } from './interfaces/custom-context.interface';
 import { Message } from 'telegraf/types';
+import { showMainMenu } from './menus/main.menu/main.menu';
+import { showSubMenu } from './menus/sub.menu/sub.menu';
+import { exampleWizard } from './wizards/example.wizard/example.wizard';
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
@@ -16,6 +19,11 @@ export class TelegramService implements OnModuleInit {
   }
 
   async onModuleInit() {
+    // Use session middleware and stage for wizard scenes
+    this.bot.use(session());
+    const stage = new Scenes.Stage<CustomContext>([exampleWizard]);
+    this.bot.use(stage.middleware());
+
     await this.setupCommands();
 
     this.bot.launch({
@@ -27,18 +35,47 @@ export class TelegramService implements OnModuleInit {
   }
 
   private async setupCommands() {
-    this.bot.command('start', async (ctx: CustomContext) => {
-      await ctx.reply('Welcome to the bot!');
+    // Start command shows the Main Menu
+    this.bot.command('start', async (ctx) => {
+      await ctx.reply('Welcome to TrendSniper Bot!');
+      await showMainMenu(ctx);
     });
 
-    this.bot.on('text', async (ctx: CustomContext) => {
+    // Default text handler (optional)
+    this.bot.on('text', async (ctx) => {
       await ctx.reply(`Received message: ${ctx.message.text}`);
     });
 
+    // Menu Actions:
+    this.bot.action('sub_menu', async (ctx) => {
+      await showSubMenu(ctx);
+    });
+
+    // Start wizard: entering the example wizard scene.
+    this.bot.action('start_wizard', async (ctx) => {
+      await ctx.scene.enter('example-wizard');
+    });
+
+    // Handle general "Other Action"
+    this.bot.action('other_action', async (ctx) => {
+      await ctx.reply('Other action selected. Returning to Main Menu.');
+      await showMainMenu(ctx);
+    });
+
+    // Global "Go Back" for non-wizard context:
+    this.bot.action('go_back', async (ctx) => {
+      // If not in a wizard scene, return to the main menu.
+      if (!ctx.scene || !ctx.scene.current) {
+        return await showMainMenu(ctx);
+      }
+      // When in the wizard, the 'go_back' action is handled within the wizard itself.
+    });
+
+    // Set bot commands for Telegram client UI
     await this.bot.telegram.setMyCommands([
       {
         command: 'start',
-        description: 'Start the bot',
+        description: 'Start the TrendSniper Bot',
       },
     ]);
   }
