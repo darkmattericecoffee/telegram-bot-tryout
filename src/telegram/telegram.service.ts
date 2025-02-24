@@ -7,7 +7,7 @@ import { Message } from 'telegraf/types';
 import { showMainMenu } from './menus/main.menu/main.menu';
 import { showSubMenu } from './menus/sub.menu/sub.menu';
 import { exampleWizard } from './wizards/example.wizard/example.wizard';
-
+import { ChartingWizard } from './wizards/charting.wizard';
 @Injectable()
 export class TelegramService implements OnModuleInit {
   private bot: Telegraf<CustomContext>;
@@ -35,7 +35,7 @@ export class TelegramService implements OnModuleInit {
   async onModuleInit() {
     // Use session middleware and stage for wizard scenes
     this.bot.use(session());
-    const stage = new Scenes.Stage<CustomContext>([exampleWizard]);
+    const stage = new Scenes.Stage<CustomContext>([exampleWizard, ChartingWizard]);
     this.bot.use(stage.middleware());
 
     await this.setupCommands();
@@ -68,6 +68,10 @@ export class TelegramService implements OnModuleInit {
     // Start wizard: entering the example wizard scene.
     this.bot.action('start_wizard', async (ctx) => {
       await ctx.scene.enter('example-wizard');
+    });
+
+    this.bot.action('charting_wizard', async (ctx) => {
+      await ctx.scene.enter('charting-wizard');
     });
 
     // Handle general "Other Action"
