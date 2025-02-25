@@ -1,214 +1,316 @@
-// src/telegram/wizards/charting.wizard.ts
 import { Scenes } from 'telegraf';
-import { CustomContext } from '../interfaces/custom-context.interface';
-import { CoinSearchComponent, CoinSearchConfig, CoinSearchState } from '../components/coin-search.component';
+import { Logger } from '@nestjs/common';
+import { CustomContext, WizardState } from '../interfaces/custom-context.interface';
+import { CoinSearchComponent, CoinSearchConfig, CoinSearchState,  } from '../components/coin-search.component';
 import { PairTimePickerComponent, PickerState, PairTimePickerComponentCallbackHandler } from '../components/pair-time-picker.component';
 import { ChartImageService } from '../services/chart-image.service';
 import { getReplyWithChart } from '../components/reply-with-image-caption.component';
-import { Logger } from '@nestjs/common';
-
-const logger = new Logger('ChartingWizard');
-const picker = new PairTimePickerComponent();
-const pickerHandler = new PairTimePickerComponentCallbackHandler();
-
-// Assuming CoinSearchService is available from DI or a local import
 import { CoinSearchService } from '../services/coin-search.service';
+// Create logger for wizard
+const logger = new Logger('ChartingWizard');
 
-export const ChartingWizard = new Scenes.WizardScene<CustomContext>(
-  'charting-wizard',
-  async (ctx) => {
-    // Step 1: Prompt for coin search query
-    logger.log('Step 1: Prompting for coin search');
-    const coinSearchComponent = new CoinSearchComponent(new CoinSearchService());
-    const coinSearchConfig: CoinSearchConfig = {
-      promptText: 'Enter the coin name or symbol to search:',
-      fieldName: 'selectedCoin',
+// Initialize components
+const coinSearchService = new CoinSearchService();
+const coinSearchComponent = new CoinSearchComponent(coinSearchService);
+const pairTimePicker = new PairTimePickerComponent();
+const pairTimePickerHandler = new PairTimePickerComponentCallbackHandler();
+const chartImageService = new ChartImageService();
+
+// Step 1: Coin Search Component - Search screen
+async function step1(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 1;
+  logger.log('Step 1: Prompting for coin search');
+  
+  const searchConfig: CoinSearchConfig = {
+    promptText: 'Enter the coin name or symbol to search:',
+    fieldName: 'selectedCoin',
+    confidenceThreshold: 2.5,
+    searchCallbackPrefix: 'coinsearch'
+  };
+  
+  await coinSearchComponent.prompt(ctx, searchConfig);
+}
+
+// Step 2: Show search results when needed
+async function step2(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 2;
+  logger.log('Step 2: Showing search results');
+  
+  // Get the current search state
+  const searchState = ctx.wizard.state.parameters?.coinSearchState as CoinSearchState;
+  
+  if (!searchState) {
+    logger.error('Search state is missing, returning to search prompt');
+    return step1(ctx);
+  }
+  
+  // Show the search results
+  await coinSearchComponent.showResults(ctx, searchState, 'coinsearch');
+}
+
+// Step 3: Pair and Timeframe Picker Component
+async function step3(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 3;
+  logger.log('Step 3: Rendering pair/time picker');
+  
+  // Set or initialize the picker state
+  if (!ctx.wizard.state.parameters) {
+    ctx.wizard.state.parameters = {};
+  }
+  
+  if (!ctx.wizard.state.parameters.pickerState) {
+    ctx.wizard.state.parameters.pickerState = {
+      selectedPairing: 'USD',
+      selectedTimeframe: '1D'
     };
-    await coinSearchComponent.prompt(ctx, coinSearchConfig);
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    // Step 2: Process coin search query from text message
-    logger.log('Step 2: Processing text input');
-    if (!ctx.message || !('text' in ctx.message)) {
-      logger.log('Step 2: No text message found');
-      return;
-    }
-    const coinSearchComponent = new CoinSearchComponent(new CoinSearchService());
-    const coinSearchConfig: CoinSearchConfig = {
-      promptText: 'Enter the coin name or symbol to search:',
-      fieldName: 'selectedCoin',
-    };
-    const searchState: CoinSearchState = await coinSearchComponent.processSearch(ctx, ctx.message.text, coinSearchConfig);
-    // Save search state in wizard state
-    ctx.wizard.state.coinSearchState = searchState;
-
-    logger.log(`Step 2: Search completed. Has selectedCoin: ${!!searchState.selectedCoin}`);
-    
-    if (searchState.selectedCoin) {
-      // If high confidence, save coin and move on directly to the pair/time picker
-      if (!ctx.wizard.state.parameters) {
-        ctx.wizard.state.parameters = {};
-      }
-      ctx.wizard.state.parameters.selectedCoin = searchState.selectedCoin;
-      
-      logger.log(`Step 2: High confidence match found. Selected coin: ${searchState.selectedCoin.name}`);
-      logger.log(`Step 2: Current step: ${ctx.wizard.cursor}`);
-      
-      // Try directly moving to the pair/time picker step
-      try {
-        // Send a debug message to confirm where we are
-        await ctx.reply(`DEBUG: Moving to pair/time picker with ${searchState.selectedCoin.name}`);
-        
-        // Initialize picker state preemptively
-        ctx.wizard.state.pickerState = { selectedPairing: 'USD', selectedTimeframe: '1D' };
-        
-        // Try moving to step 3 (index 3, which is the 4th step)
-        logger.log('Step 2: Attempting to move to pair/time picker step');
-        
-        // Clear any pending callback queries to avoid interference
-        if (ctx.callbackQuery) {
-          await ctx.answerCbQuery();
-        }
-        
-        // Try both methods to ensure one works
-        return ctx.wizard.selectStep(3);
-      } catch (error) {
-        logger.error(`Step 2: Error moving to next step: ${error.message}`);
-        await ctx.reply('An error occurred. Please try again.');
-        return ctx.scene.leave();
-      }
-    }
-    
-    // Otherwise, show the results for user selection.
-    logger.log('Step 2: No high confidence match, showing results');
-    await coinSearchComponent.showResults(ctx, searchState);
-    // Stay on the same step waiting for a callback query
-  },
-  async (ctx) => {
-    // Step 3: Handle coin selection callback
-    logger.log('Step 3: Handling coin selection callback');
-    
-    if (ctx.callbackQuery && 'data' in ctx.callbackQuery && typeof ctx.callbackQuery.data === 'string' &&
-        ctx.callbackQuery.data.startsWith('coinsearch_select_')) {
-      logger.log(`Step 3: Processing selection callback: ${ctx.callbackQuery.data}`);
-      const selectedCoinId = ctx.callbackQuery.data.replace('coinsearch_select_', '');
-      const coinSearchState: CoinSearchState | undefined = ctx.wizard.state.coinSearchState;
-      if (coinSearchState) {
-        const selected = coinSearchState.results.find(r => r.coin.id === selectedCoinId);
-        if (selected) {
-          if (!ctx.wizard.state.parameters) {
-            ctx.wizard.state.parameters = {};
-          }
-          ctx.wizard.state.parameters.selectedCoin = selected.coin;
-          logger.log(`Step 3: Selected coin from callback: ${selected.coin.name}`);
-        }
-      }
-      await ctx.answerCbQuery();
-      logger.log('Step 3: Moving to pair/time picker step');
-      return ctx.wizard.next();
-    }
-    
-    // This branch is for when a coin was already selected with high confidence
-    // and we're just passing through this step
-    else if (ctx.wizard.state.parameters?.selectedCoin) {
-      logger.log(`Step 3: Already have selected coin: ${ctx.wizard.state.parameters.selectedCoin.name}`);
-      logger.log('Step 3: Moving to pair/time picker step');
-      return ctx.wizard.next();
-    }
-    
-    logger.log('Step 3: No callback or selected coin found. Doing nothing.');
-    // If not our callback and no selected coin, do nothing.
-  },
-  async (ctx) => {
-    // Step 4: Render the Pair and Timeframe picker.
-    logger.log('Step 4: Rendering pair/time picker');
-    
-    // Set a default state if not already
-    if (!ctx.wizard.state.pickerState) {
-      ctx.wizard.state.pickerState = { selectedPairing: 'USD', selectedTimeframe: '1D' };
-    }
-    
-    logger.log(`Step 4: Picker state: ${JSON.stringify(ctx.wizard.state.pickerState)}`);
-    logger.log(`Step 4: Selected coin: ${ctx.wizard.state.parameters?.selectedCoin?.name || 'None'}`);
-    
-    const keyboard = picker.render('cmbpicker', ctx.wizard.state.pickerState);
-    const promptText = 'Select a currency pairing and timeframe:';
-    
+  }
+  
+  logger.log(`Step 3: Picker state: ${JSON.stringify(ctx.wizard.state.parameters.pickerState)}`);
+  logger.log(`Step 3: Selected coin: ${ctx.wizard.state.parameters?.selectedCoin?.name || 'None'}`);
+  
+  // Show the combined picker with current selection
+  const messageText = 'Select a currency pairing and timeframe:';
+  const keyboard = pairTimePicker.render('cmbpicker', ctx.wizard.state.parameters.pickerState);
+  
+  if (ctx.callbackQuery) {
     try {
-      if (ctx.callbackQuery) {
-        await ctx.editMessageText(promptText, { reply_markup: keyboard.reply_markup, parse_mode: 'Markdown' });
-      } else {
-        await ctx.reply(promptText, { reply_markup: keyboard.reply_markup, parse_mode: 'Markdown' });
-      }
-      logger.log('Step 4: Pair/time picker rendered successfully');
-      return ctx.wizard.next();
+      await ctx.editMessageText(messageText, {
+        reply_markup: keyboard.reply_markup,
+        parse_mode: 'Markdown'
+      });
     } catch (error) {
-      logger.error(`Step 4: Error rendering picker: ${error.message}`);
-      await ctx.reply('An error occurred with the picker. Please try again.');
-      return ctx.scene.leave();
+      await ctx.reply(messageText, {
+        reply_markup: keyboard.reply_markup,
+        parse_mode: 'Markdown'
+      });
     }
-  },
-  async (ctx) => {
-    // Step 5: Process selections from the Pair/Time picker.
-    logger.log('Step 5: Processing pair/time picker selections');
-    
-    if (ctx.callbackQuery && 'data' in ctx.callbackQuery && typeof ctx.callbackQuery.data === 'string') {
-      logger.log(`Step 5: Received callback: ${ctx.callbackQuery.data}`);
-      
-      // Use the pickerHandler to process the callback:
-      const { state, proceed } = await pickerHandler.handleCallback(ctx, ctx.callbackQuery.data, ctx.wizard.state.pickerState!);
-      ctx.wizard.state.pickerState = state;
-      
-      if (proceed) {
-        logger.log('Step 5: Proceed flag received, moving to chart generation');
-        return ctx.wizard.next();
-      } else {
-        logger.log('Step 5: Updating picker with new state');
-        const keyboard = picker.render('cmbpicker', state);
-        await ctx.editMessageText('Select a currency pairing and timeframe:', { reply_markup: keyboard.reply_markup, parse_mode: 'Markdown' });
-      }
-    } else {
-      logger.log('Step 5: No callback data received');
-    }
-  },
-  async (ctx) => {
-    // Step 6: Final step - generate and send the chart.
-    logger.log('Step 6: Generating chart');
-    
-    const parameters = ctx.wizard.state.parameters;
-    const pickerState: PickerState | undefined = ctx.wizard.state.pickerState;
-    
-    logger.log(`Step 6: Parameters: ${JSON.stringify(parameters)}`);
-    logger.log(`Step 6: Picker state: ${JSON.stringify(pickerState)}`);
-    
-    if (!pickerState || !parameters?.selectedCoin) {
-      logger.error('Step 6: Missing required parameters');
-      await ctx.reply('Missing parameters. Exiting wizard.');
-      return ctx.scene.leave();
-    }
-    
-    // Ensure selectedPairing is a string (fallback if null)
-    const selectedPairing: string = pickerState.selectedPairing ?? 'USD';
-    const selectedTimeframe: string = pickerState.selectedTimeframe ?? '1D';
-    const selectedCoin = parameters.selectedCoin;
+  } else {
+    await ctx.reply(messageText, {
+      reply_markup: keyboard.reply_markup,
+      parse_mode: 'Markdown'
+    });
+  }
+}
 
-    logger.log(`Step 6: Generating chart for ${selectedCoin.name} / ${selectedPairing} / ${selectedTimeframe}`);
-    
-    const caption = `Chart for ${selectedCoin.name} (${selectedCoin.symbol})\nPairing: ${selectedPairing}\nTimeframe: ${selectedTimeframe}`;
-
-    try {
-      const chartImageService = new ChartImageService();
-      const imageBuffer = await chartImageService.generateMockChart(selectedCoin.name, selectedPairing, selectedTimeframe);
-
-      await getReplyWithChart(ctx, imageBuffer, caption);
-      logger.log('Step 6: Chart generated and sent successfully');
-    } catch (error) {
-      logger.error(`Step 6: Error generating chart: ${error.message}`);
-      await ctx.reply('An error occurred while generating the chart. Please try again.');
-    }
-    
-    logger.log('Step 6: Leaving wizard scene');
+// Step 4: Generate chart after selections are made
+async function step4(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 4;
+  logger.log('Step 4: Generating chart');
+  
+  const parameters = ctx.wizard.state.parameters;
+  const pickerState: PickerState | undefined = ctx.wizard.state.parameters?.pickerState;
+  
+  logger.log(`Step 4: Parameters: ${JSON.stringify(parameters)}`);
+  logger.log(`Step 4: Picker state: ${JSON.stringify(pickerState)}`);
+  
+  if (!pickerState || !parameters?.selectedCoin) {
+    logger.error('Step 4: Missing required parameters');
+    await ctx.reply('Missing parameters. Exiting wizard.');
     return ctx.scene.leave();
   }
+  
+  // Ensure selectedPairing is a string (fallback if null)
+  const selectedPairing: string = pickerState.selectedPairing ?? 'USD';
+  const selectedTimeframe: string = pickerState.selectedTimeframe ?? '1D';
+  const selectedCoin = parameters.selectedCoin;
+
+  logger.log(`Step 4: Generating chart for ${selectedCoin.name} / ${selectedPairing} / ${selectedTimeframe}`);
+  
+  const caption = `Chart for ${selectedCoin.name} (${selectedCoin.symbol})\nPairing: ${selectedPairing}\nTimeframe: ${selectedTimeframe}`;
+
+  try {
+    const imageBuffer = await chartImageService.generateMockChart(selectedCoin.name, selectedPairing, selectedTimeframe);
+    await getReplyWithChart(ctx, imageBuffer, caption);
+    logger.log('Step 4: Chart generated and sent successfully');
+  } catch (error) {
+    logger.error(`Step 4: Error generating chart: ${error.message}`);
+    await ctx.reply('An error occurred while generating the chart. Please try again.');
+  }
+  
+  logger.log('Step 4: Leaving wizard scene');
+  return ctx.scene.leave();
+}
+
+// Create the charting wizard with clear step functions
+export const ChartingWizard = new Scenes.WizardScene<CustomContext>(
+  'charting-wizard',
+  step1
 );
+
+// Handle text input for coin search
+ChartingWizard.on('text', async (ctx) => {
+  const wizardState = ctx.wizard.state as WizardState;
+  const step = wizardState.step;
+  
+  logger.log(`Received text input in step ${step}`);
+  
+  // Handle only step 1 (initial coin search)
+  if (step === 1) {
+    logger.log('Processing text input for coin search');
+    
+    try {
+      // Get the search query
+      const query = ctx.message.text;
+      logger.log(`Search query: "${query}"`);
+      
+      // Process the search
+      const searchConfig = {
+        promptText: '',  // Not used here
+        fieldName: 'selectedCoin',
+        confidenceThreshold: 2.5
+      };
+      
+      if (!wizardState.parameters) {
+        wizardState.parameters = {};
+      }
+      
+      const state = await coinSearchComponent.processSearch(ctx, query, searchConfig);
+      
+      // Store the search state
+      wizardState.parameters.coinSearchState = state;
+      
+      // If we have a high confidence match, store it and proceed
+      if (state.selectedCoin) {
+        logger.log(`High confidence match found: ${state.selectedCoin.name}`);
+        wizardState.parameters.selectedCoin = state.selectedCoin;
+        return step3(ctx);
+      }
+      
+      // Otherwise, show results for user to choose
+      logger.log('No high confidence match, showing results');
+      return step2(ctx);
+    } catch (error) {
+      logger.error(`Error processing search: ${error.message}`);
+      await ctx.reply('An error occurred while searching. Please try again.');
+      return step1(ctx);
+    }
+  }
+});
+
+// Coin search result selection
+ChartingWizard.action(/^coinsearch_select_\w+$/, async (ctx) => {
+  logger.log('Coin selection action triggered');
+  
+  // Extract coin ID from callback data
+  const callbackData = ctx.callbackQuery && 'data' in ctx.callbackQuery 
+    ? (ctx.callbackQuery as any).data
+    : '';
+  
+  const coinId = callbackData.split('_').pop();
+  logger.log(`Selected coin ID: ${coinId}`);
+  
+  // Find the selected coin in the results
+  const state = ctx.wizard.state.parameters.coinSearchState as CoinSearchState;
+  const selectedCoin = state?.results?.find(r => r.coin.id === coinId)?.coin;
+  
+  if (selectedCoin) {
+    // Store the selection
+    logger.log(`Found selected coin: ${selectedCoin.name}`);
+    ctx.wizard.state.parameters.selectedCoin = selectedCoin;
+    
+    // Notify the user
+    await ctx.answerCbQuery(`Selected ${selectedCoin.name} (${selectedCoin.symbol})`);
+    
+    // Proceed to next step
+    return step3(ctx);
+  }
+  
+  logger.error(`Coin not found with ID: ${coinId}`);
+  await ctx.answerCbQuery('Error: Coin not found');
+  return step2(ctx);
+});
+
+// Pagination for search results
+ChartingWizard.action(/^coinsearch_next_\d+$/, async (ctx) => {
+  logger.log('Next page action triggered');
+  
+  // Get current state
+  const state = ctx.wizard.state.parameters.coinSearchState as CoinSearchState;
+  
+  if (!state) {
+    logger.error('Search state is missing');
+    return step1(ctx);
+  }
+  
+  // Update page number
+  state.page += 1;
+  
+  // Update the state
+  ctx.wizard.state.parameters.coinSearchState = state;
+  
+  // Show updated results
+  await coinSearchComponent.showResults(ctx, state, 'coinsearch');
+  
+  await ctx.answerCbQuery();
+});
+
+ChartingWizard.action(/^coinsearch_prev_\d+$/, async (ctx) => {
+  logger.log('Previous page action triggered');
+  
+  // Get current state
+  const state = ctx.wizard.state.parameters.coinSearchState as CoinSearchState;
+  
+  if (!state) {
+    logger.error('Search state is missing');
+    return step1(ctx);
+  }
+  
+  // Update page number (ensure it doesn't go below 1)
+  state.page = Math.max(1, state.page - 1);
+  
+  // Update the state
+  ctx.wizard.state.parameters.coinSearchState = state;
+  
+  // Show updated results
+  await coinSearchComponent.showResults(ctx, state, 'coinsearch');
+  
+  await ctx.answerCbQuery();
+});
+
+// Handle all pair/time picker callbacks
+ChartingWizard.action(/^cmbpicker_.+$/, async (ctx) => {
+  // Extract the data from the callback query
+  const data = ctx.callbackQuery && 'data' in ctx.callbackQuery 
+    ? (ctx.callbackQuery as any).data 
+    : undefined;
+  if (!data) return;
+  
+  // Set up the current state for the handler
+  const currentState: PickerState = ctx.wizard.state.parameters.pickerState || {
+    selectedPairing: 'USD',
+    selectedTimeframe: '1D'
+  };
+  
+  // Process the callback with the handler
+  const result = await pairTimePickerHandler.handleCallback(ctx, data, currentState);
+  
+  // Update the state in the wizard
+  ctx.wizard.state.parameters.pickerState = result.state;
+  
+  // If the user clicked "Choose", proceed to the next step
+  if (result.proceed) {
+    return step4(ctx);
+  }
+  
+  // Otherwise, just redraw the same step with the updated selection
+  return step3(ctx);
+});
+
+// Go Back button handler
+ChartingWizard.action('go_back', async (ctx) => {
+  const wizardState = ctx.wizard.state as WizardState;
+  if (wizardState.step && wizardState.step > 1) {
+    wizardState.step = wizardState.step - 1;
+    if (wizardState.step === 1) {
+      return step1(ctx);
+    } else if (wizardState.step === 2) {
+      return step2(ctx);
+    } else if (wizardState.step === 3) {
+      return step3(ctx);
+    }
+  } else {
+    await ctx.scene.leave();
+    // Optional: Return to main menu or other scene
+    // return showMainMenu(ctx);
+  }
+});

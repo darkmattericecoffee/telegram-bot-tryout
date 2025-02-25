@@ -2,7 +2,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as d3 from 'd3';
 import { JSDOM } from 'jsdom';
-import sharp from 'sharp';
+import * as sharp from 'sharp';
 
 @Injectable()
 export class ChartImageService {
