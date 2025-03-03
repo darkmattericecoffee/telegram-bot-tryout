@@ -1,11 +1,14 @@
 import { Scenes } from 'telegraf';
 import { Logger } from '@nestjs/common';
 import { CustomContext, WizardState } from '../interfaces/custom-context.interface';
-import { CoinSearchComponent, CoinSearchConfig, CoinSearchState,  } from '../components/coin-search.component';
+import { CoinSearchComponent, CoinSearchConfig, CoinSearchState } from '../components/coin-search.component';
 import { PairTimePickerComponent, PickerState, PairTimePickerComponentCallbackHandler } from '../components/pair-time-picker.component';
 import { ChartImageService } from '../services/chart-image.service';
 import { getReplyWithChart } from '../components/reply-with-image-caption.component';
 import { CoinSearchService } from '../services/coin-search.service';
+import { ActionButtonsHandler, ActionButtonType } from '../components/action-buttons.component';
+import { LoadingMessageComponent, withLoading } from '../components/loading-message.component';
+
 // Create logger for wizard
 const logger = new Logger('ChartingWizard');
 
@@ -15,6 +18,22 @@ const coinSearchComponent = new CoinSearchComponent(coinSearchService);
 const pairTimePicker = new PairTimePickerComponent();
 const pairTimePickerHandler = new PairTimePickerComponentCallbackHandler();
 const chartImageService = new ChartImageService();
+const actionButtonsHandler = new ActionButtonsHandler();
+const loadingMessageComponent = new LoadingMessageComponent();
+
+// Chart loading messages
+const CHART_LOADING_MESSAGES = [
+  'Drawing some lines...',
+  'Evaluating the charts, standby...',
+  'Chart will be done in a sec, thinking...',
+  'Analyzing market patterns...',
+  'Crunching the numbers...',
+  'Reading the candlesticks...',
+  'Consulting with the trading algorithms...',
+  'Generating your chart, almost there...',
+  'Looking for support and resistance levels...',
+  'Checking the technical indicators...'
+];
 
 // Step 1: Coin Search Component - Search screen
 async function step1(ctx: CustomContext) {
@@ -22,7 +41,7 @@ async function step1(ctx: CustomContext) {
   logger.log('Step 1: Prompting for coin search');
   
   const searchConfig: CoinSearchConfig = {
-    promptText: 'Enter the coin name or symbol to search:',
+    promptText: '🔍 *Search for a cryptocurrency:*\n\nPlease enter the name or symbol of the coin you want to chart.',
     fieldName: 'selectedCoin',
     confidenceThreshold: 2.5,
     searchCallbackPrefix: 'coinsearch'
@@ -69,7 +88,7 @@ async function step3(ctx: CustomContext) {
   logger.log(`Step 3: Selected coin: ${ctx.wizard.state.parameters?.selectedCoin?.name || 'None'}`);
   
   // Show the combined picker with current selection
-  const messageText = 'Select a currency pairing and timeframe:';
+  const messageText = '📊 *Select a currency pairing and timeframe:*';
   const keyboard = pairTimePicker.render('cmbpicker', ctx.wizard.state.parameters.pickerState);
   
   if (ctx.callbackQuery) {
@@ -116,15 +135,43 @@ async function step4(ctx: CustomContext) {
 
   logger.log(`Step 4: Generating chart for ${selectedCoin.name} / ${selectedPairing} / ${selectedTimeframe}`);
   
-  const caption = `Chart for ${selectedCoin.name} (${selectedCoin.symbol})\nPairing: ${selectedPairing}\nTimeframe: ${selectedTimeframe}`;
-
   try {
-    const imageBuffer = await chartImageService.generateMockChart(selectedCoin.name, selectedPairing, selectedTimeframe);
-    await getReplyWithChart(ctx, imageBuffer, caption);
-    logger.log('Step 4: Chart generated and sent successfully');
+    // Use the withLoading helper to show loading messages during chart generation
+    await withLoading(
+      ctx,
+      async () => {
+        // Generate the chart
+        const imageBuffer = await chartImageService.generateMockChart(
+          selectedCoin.name, 
+          selectedPairing, 
+          selectedTimeframe
+        );
+        
+        // Prepare the caption
+        const caption = `📈 *${selectedCoin.name} (${selectedCoin.symbol})*\n` +
+                        `Pairing: ${selectedPairing}\n` +
+                        `Timeframe: ${selectedTimeframe}`;
+        
+        // Send the chart with action buttons
+        await getReplyWithChart(
+          ctx, 
+          imageBuffer, 
+          caption, 
+          selectedCoin.id, // Pass the coin ID for the buttons
+          ActionButtonType.TRADING // Use TRADING type to include price alerts too
+        );
+        
+        logger.log('Step 4: Chart generated and sent successfully with action buttons');
+      },
+      {
+        // Configure the loading messages
+        messages: CHART_LOADING_MESSAGES,
+        emoji: '📊'
+      }
+    );
   } catch (error) {
     logger.error(`Step 4: Error generating chart: ${error.message}`);
-    await ctx.reply('An error occurred while generating the chart. Please try again.');
+    await ctx.reply('❌ An error occurred while generating the chart. Please try again.');
   }
   
   logger.log('Step 4: Leaving wizard scene');
@@ -149,39 +196,53 @@ ChartingWizard.on('text', async (ctx) => {
     logger.log('Processing text input for coin search');
     
     try {
-      // Get the search query
-      const query = ctx.message.text;
-      logger.log(`Search query: "${query}"`);
-      
-      // Process the search
-      const searchConfig = {
-        promptText: '',  // Not used here
-        fieldName: 'selectedCoin',
-        confidenceThreshold: 2.5
-      };
-      
-      if (!wizardState.parameters) {
-        wizardState.parameters = {};
-      }
-      
-      const state = await coinSearchComponent.processSearch(ctx, query, searchConfig);
-      
-      // Store the search state
-      wizardState.parameters.coinSearchState = state;
-      
-      // If we have a high confidence match, store it and proceed
-      if (state.selectedCoin) {
-        logger.log(`High confidence match found: ${state.selectedCoin.name}`);
-        wizardState.parameters.selectedCoin = state.selectedCoin;
-        return step3(ctx);
-      }
-      
-      // Otherwise, show results for user to choose
-      logger.log('No high confidence match, showing results');
-      return step2(ctx);
+      // Use loading message for search process
+      await withLoading(
+        ctx,
+        async () => {
+          // Get the search query
+          const query = ctx.message.text;
+          logger.log(`Search query: "${query}"`);
+          
+          // Process the search
+          const searchConfig = {
+            promptText: '',  // Not used here
+            fieldName: 'selectedCoin',
+            confidenceThreshold: 2.5
+          };
+          
+          if (!wizardState.parameters) {
+            wizardState.parameters = {};
+          }
+          
+          const state = await coinSearchComponent.processSearch(ctx, query, searchConfig);
+          
+          // Store the search state
+          wizardState.parameters.coinSearchState = state;
+          
+          // If we have a high confidence match, store it and proceed
+          if (state.selectedCoin) {
+            logger.log(`High confidence match found: ${state.selectedCoin.name}`);
+            wizardState.parameters.selectedCoin = state.selectedCoin;
+            return step3(ctx);
+          }
+          
+          // Otherwise, show results for user to choose
+          logger.log('No high confidence match, showing results');
+          return step2(ctx);
+        },
+        {
+          messages: [
+            'Searching for coins...',
+            'Looking up cryptocurrency data...',
+            'Fetching market information...'
+          ],
+          emoji: '🔍'
+        }
+      );
     } catch (error) {
       logger.error(`Error processing search: ${error.message}`);
-      await ctx.reply('An error occurred while searching. Please try again.');
+      await ctx.reply('❌ An error occurred while searching. Please try again.');
       return step1(ctx);
     }
   }
@@ -294,6 +355,19 @@ ChartingWizard.action(/^cmbpicker_.+$/, async (ctx) => {
   
   // Otherwise, just redraw the same step with the updated selection
   return step3(ctx);
+});
+
+// Handle action button callbacks (Add to Watchlist, etc.)
+ChartingWizard.action(/^(add_watchlist|set_alert|follow_source)_.+$/, async (ctx) => {
+  logger.log('Action button callback triggered');
+  
+  // Get the callback data
+  const data = ctx.callbackQuery && 'data' in ctx.callbackQuery 
+    ? (ctx.callbackQuery as any).data 
+    : '';
+  
+  // Let the handler process the action
+  await actionButtonsHandler.handleCallback(ctx, data);
 });
 
 // Go Back button handler
