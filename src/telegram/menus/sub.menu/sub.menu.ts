@@ -6,11 +6,16 @@ import { createGoBackButton } from 'src/telegram/constants/buttons.constant';
 export async function showSubMenu(ctx: CustomContext) {
   const messageText = 'Sub Menu';
   const keyboard = Markup.inlineKeyboard([
-    Markup.button.callback('Start Wizard', 'start_wizard'),
-    Markup.button.callback('Charting Wizard', 'charting_wizard'),
-    createGoBackButton(), // Go Back button
+    [
+      Markup.button.callback('Start Wizard', 'start_wizard'),
+      Markup.button.callback('Charting Wizard', 'charting_wizard')
+    ],
+    [
+      Markup.button.callback('📋 Watchlist', 'watchlist_submenu')
+    ],
+    [createGoBackButton()], // Go Back button
   ]);
-
+  
   if (ctx.callbackQuery) {
     try {
       await ctx.editMessageText(messageText, {

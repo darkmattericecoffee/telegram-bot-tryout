@@ -1,13 +1,10 @@
 // src/telegram/wizards/watchlist-wizards.module.ts
 import { Module } from '@nestjs/common';
 import { WatchlistService } from '../services/watchlist.service';
-import {
-  createShowWatchlistWizard,
-  createCreateWatchlistWizard,
-  createRenameWatchlistWizard,
-  createDeleteWatchlistWizard
-} from './watchlist.wizard';
-
+import { createShowWatchlistWizard } from './watchlist/show-watchlist.wizard';
+import { createRenameWatchlistWizard } from './watchlist/rename-watchlist.wizard';
+import { createCreateWatchlistWizard } from './watchlist/create-watchlist.wizard';
+import { createDeleteWatchlistWizard } from './watchlist/delete-watchlist.wizard';
 @Module({
   providers: [
     WatchlistService,
