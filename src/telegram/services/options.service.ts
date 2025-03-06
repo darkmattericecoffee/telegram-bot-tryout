@@ -4,7 +4,9 @@ export enum OptionsType {
   INDICATORS = 'indicators',
   ALERTS = 'alerts',
   EXCHANGES = 'exchanges',
-  STRATEGIES = 'strategies'
+  STRATEGIES = 'strategies',
+  MARKET_TRANSITIONS = 'market_transitions',
+  LEVEL_BREAKS = 'level_breaks'
 }
 
 @Injectable()
@@ -25,7 +27,7 @@ export class OptionsService {
     // Return different options based on the type
     switch (type) {
       case OptionsType.INDICATORS:
-        return ['RSI', 'MACD', 'Bollinger Bands', 'Moving Average', 'Stochastic', 'Ichimoku Cloud'];
+        return ['RSI', 'ADX', 'Holistic', 'Price vs Trend', 'Price vs Volume', 'Dip', 'Pump'];
       
       case OptionsType.ALERTS:
         return ['Price Alert', 'Volume Alert', 'Pattern Alert', 'Indicator Alert', 'News Alert'];
@@ -35,6 +37,11 @@ export class OptionsService {
       
       case OptionsType.STRATEGIES:
         return ['Trend Following', 'Mean Reversion', 'Breakout', 'Range Trading', 'Arbitrage', 'Grid Trading'];
+
+      case OptionsType.MARKET_TRANSITIONS:
+        return ['Bullish to Bearish', 'Bearish to Bullish', 'Super bullish to bullish'];
+        case OptionsType.LEVEL_BREAKS:
+          return ['Support break', 'Resistance break', 'Support rejection', 'Resistance rejection'];
       
       default:
         return ['Option 1', 'Option 2', 'Option 3', 'Option 4', 'Option 5'];

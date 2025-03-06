@@ -1,12 +1,18 @@
-// src/telegram/menus/main.menu/main.menu.ts
+// src/telegram/menus/main.menu/main.menu.ts - Updated version
 import { Markup } from 'telegraf';
 import { CustomContext } from '../../interfaces/custom-context.interface';
 
 export async function showMainMenu(ctx: CustomContext) {
   const mainMenuText = 'Welcome to TrendSniper Bot!\nChoose an option:';
   const mainMenuKeyboard = Markup.inlineKeyboard([
-    Markup.button.callback('Sub Menu', 'sub_menu'),
-    Markup.button.callback('Start Wizard', 'start_wizard'),
+    [
+      Markup.button.callback('📋 Watchlist', 'watchlist_submenu'),
+      Markup.button.callback('📊 Analysis', 'analysis_submenu')
+    ],
+    [
+      Markup.button.callback('🔔 Alerts', 'alerts_submenu'),
+      Markup.button.callback('🔍 Discover', 'discover_submenu')
+    ]
   ]);
 
   if (ctx.callbackQuery) {

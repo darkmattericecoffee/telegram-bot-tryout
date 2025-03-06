@@ -1,4 +1,4 @@
-// src/telegram/wizards/show-watchlist.wizard.ts
+// src/telegram/wizards/watchlist/show-watchlist.wizard.ts
 import { Scenes } from 'telegraf';
 import { Logger } from '@nestjs/common';
 import { CustomContext } from '../../interfaces/custom-context.interface';
@@ -7,6 +7,7 @@ import { showSuccessToast, showErrorToast } from '../../components/feedback.comp
 import { WatchlistService } from '../../services/watchlist.service';
 import { createGoBackButton } from '../../constants/buttons.constant';
 import { Markup } from 'telegraf';
+import { showWatchlistMenu } from '../../menus/sub.menu/watchlist.menu';
 
 // Create logger
 const logger = new Logger('ShowWatchlistWizard');
@@ -114,37 +115,9 @@ export const createShowWatchlistWizard = (watchlistService: WatchlistService) =>
   showWatchlistWizard.action('watchlist_settings', async (ctx) => {
     try {
       logger.log('Opening watchlist settings');
-      
-      const settingsText = 'Watchlist Settings';
-      const keyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback('Create Watchlist', 'create_watchlist_settings'),
-          Markup.button.callback('Rename Watchlist', 'rename_watchlist_settings')
-        ],
-        [
-          Markup.button.callback('Delete Watchlist', 'delete_watchlist_settings'),
-          Markup.button.callback('Add Coins', 'add_coins_settings')
-        ],
-        [createGoBackButton()]
-      ]);
-      
-      if (ctx.callbackQuery) {
-        try {
-          await ctx.editMessageText(settingsText, {
-            reply_markup: keyboard.reply_markup,
-          });
-        } catch (error) {
-          await ctx.reply(settingsText, {
-            reply_markup: keyboard.reply_markup,
-          });
-        }
-      } else {
-        await ctx.reply(settingsText, {
-          reply_markup: keyboard.reply_markup,
-        });
-      }
-      
       await ctx.answerCbQuery();
+      await ctx.scene.leave();
+      await showWatchlistMenu(ctx);
     } catch (error) {
       logger.error(`Error opening watchlist settings: ${error.message}`);
       await ctx.answerCbQuery('Error opening settings');
@@ -179,35 +152,8 @@ export const createShowWatchlistWizard = (watchlistService: WatchlistService) =>
     logger.log('Leaving show watchlist wizard');
     await ctx.scene.leave();
     
-    // Return to the sub menu or other appropriate menu
-    const messageText = 'Watchlist Menu';
-    const keyboard = Markup.inlineKeyboard([
-      [
-        Markup.button.callback('Show Watchlists', 'show_watchlist'),
-        Markup.button.callback('Create Watchlist', 'create_watchlist')
-      ],
-      [
-        Markup.button.callback('Rename Watchlist', 'rename_watchlist'),
-        Markup.button.callback('Delete Watchlist', 'delete_watchlist')
-      ],
-      [createGoBackButton()]
-    ]);
-    
-    if (ctx.callbackQuery) {
-      try {
-        await ctx.editMessageText(messageText, {
-          reply_markup: keyboard.reply_markup,
-        });
-      } catch (error) {
-        await ctx.reply(messageText, {
-          reply_markup: keyboard.reply_markup,
-        });
-      }
-    } else {
-      await ctx.reply(messageText, {
-        reply_markup: keyboard.reply_markup,
-      });
-    }
+    // Return to the watchlist menu
+    await showWatchlistMenu(ctx);
   });
   
   return showWatchlistWizard;

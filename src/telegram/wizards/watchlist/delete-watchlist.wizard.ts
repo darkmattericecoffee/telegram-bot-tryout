@@ -1,4 +1,4 @@
-// src/telegram/wizards/delete-watchlist.wizard.ts
+// src/telegram/wizards/watchlist/delete-watchlist.wizard.ts
 import { Scenes } from 'telegraf';
 import { Logger } from '@nestjs/common';
 import { CustomContext } from '../../interfaces/custom-context.interface';
@@ -7,6 +7,7 @@ import { showSuccessToast, showErrorToast } from '../../components/feedback.comp
 import { WatchlistService } from '../../services/watchlist.service';
 import { createGoBackButton } from '../../constants/buttons.constant';
 import { Markup } from 'telegraf';
+import { showWatchlistMenu } from '../../menus/sub.menu/watchlist.menu';
 
 // Create logger
 const logger = new Logger('DeleteWatchlistWizard');
@@ -37,7 +38,9 @@ export const createDeleteWatchlistWizard = (watchlistService: WatchlistService) 
         
         if (watchlists.length === 0) {
           await ctx.reply('You don\'t have any watchlists to delete.');
-          return ctx.scene.leave();
+          await ctx.scene.leave();
+          await showWatchlistMenu(ctx);
+          return;
         }
         
         // Create buttons for each watchlist
@@ -62,7 +65,9 @@ export const createDeleteWatchlistWizard = (watchlistService: WatchlistService) 
       } catch (error) {
         logger.error(`Error in delete watchlist wizard: ${error.message}`);
         await showErrorToast(ctx, 'Failed to load watchlists. Please try again.');
-        return ctx.scene.leave();
+        await ctx.scene.leave();
+        await showWatchlistMenu(ctx);
+        return;
       }
     },
     // Step 2: Confirm deletion
@@ -79,7 +84,9 @@ export const createDeleteWatchlistWizard = (watchlistService: WatchlistService) 
         
         if (!watchlistId || !watchlistName) {
           await showErrorToast(ctx, 'Missing watchlist information.');
-          return ctx.scene.leave();
+          await ctx.scene.leave();
+          await showWatchlistMenu(ctx);
+          return;
         }
         
         // Get the telegram ID and determine if it's a group
@@ -95,26 +102,19 @@ export const createDeleteWatchlistWizard = (watchlistService: WatchlistService) 
         
         await showSuccessToast(ctx, `Watchlist "${watchlistName}" has been deleted!`);
         
-        // Display watchlist menu
-        const messageText = `Watchlist "${watchlistName}" deleted successfully!`;
-        const keyboard = Markup.inlineKeyboard([
-          [
-            Markup.button.callback('View Watchlists', 'show_watchlist'),
-            Markup.button.callback('Delete Another', 'delete_watchlist')
-          ],
-          [createGoBackButton()]
-        ]);
+        // Display success message
+        await ctx.reply(`Watchlist "${watchlistName}" deleted successfully!`);
         
-        await ctx.reply(messageText, {
-          reply_markup: keyboard.reply_markup,
-          parse_mode: 'Markdown'
-        });
+        // Return to watchlist menu
+        await showWatchlistMenu(ctx);
         
         return ctx.scene.leave();
       } catch (error) {
         logger.error(`Error deleting watchlist: ${error.message}`);
         await showErrorToast(ctx, 'Failed to delete watchlist. Please try again.');
-        return ctx.scene.leave();
+        await ctx.scene.leave();
+        await showWatchlistMenu(ctx);
+        return;
       }
     }
   );
@@ -154,7 +154,9 @@ export const createDeleteWatchlistWizard = (watchlistService: WatchlistService) 
     } catch (error) {
       logger.error(`Error handling watchlist selection: ${error.message}`);
       await ctx.answerCbQuery('Error selecting watchlist');
-      return ctx.scene.leave();
+      await ctx.scene.leave();
+      await showWatchlistMenu(ctx);
+      return;
     }
   });
   
@@ -169,7 +171,9 @@ export const createDeleteWatchlistWizard = (watchlistService: WatchlistService) 
       if (currentIndex < deleteWatchlistWizard.middleware().length) {
         return deleteWatchlistWizard.middleware()[currentIndex](ctx, async () => {});
       }
-      return ctx.scene.leave();
+      await ctx.scene.leave();
+      await showWatchlistMenu(ctx);
+      return;
     }
   );
   
@@ -179,34 +183,7 @@ export const createDeleteWatchlistWizard = (watchlistService: WatchlistService) 
     await ctx.scene.leave();
     
     // Return to the watchlist menu
-    const messageText = 'Watchlist Menu';
-    const keyboard = Markup.inlineKeyboard([
-      [
-        Markup.button.callback('Show Watchlists', 'show_watchlist'),
-        Markup.button.callback('Create Watchlist', 'create_watchlist')
-      ],
-      [
-        Markup.button.callback('Rename Watchlist', 'rename_watchlist'),
-        Markup.button.callback('Delete Watchlist', 'delete_watchlist')
-      ],
-      [createGoBackButton()]
-    ]);
-    
-    if (ctx.callbackQuery) {
-      try {
-        await ctx.editMessageText(messageText, {
-          reply_markup: keyboard.reply_markup,
-        });
-      } catch (error) {
-        await ctx.reply(messageText, {
-          reply_markup: keyboard.reply_markup,
-        });
-      }
-    } else {
-      await ctx.reply(messageText, {
-        reply_markup: keyboard.reply_markup,
-      });
-    }
+    await showWatchlistMenu(ctx);
   });
   
   return deleteWatchlistWizard;

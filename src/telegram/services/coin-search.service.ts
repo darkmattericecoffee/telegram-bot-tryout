@@ -225,4 +225,23 @@ export class CoinSearchService {
       lastPage: Math.ceil(sortedResults.length / limit),
     };
   }
+
+    /**
+   * Get coin details by ID
+   * @param id Coin ID
+   * @returns Coin details or null if not found
+   */
+    async getCoinById(id: string): Promise<Coin | null> {
+      this.logger.log(`Getting coin details for ID: ${id}`);
+      
+      const coin = this.mockCoins.find(c => c.id.toLowerCase() === id.toLowerCase());
+      
+      if (coin) {
+        this.logger.log(`Found coin: ${coin.name} (${coin.symbol})`);
+        return coin;
+      }
+      
+      this.logger.log(`Coin with ID ${id} not found`);
+      return null;
+    }
 }

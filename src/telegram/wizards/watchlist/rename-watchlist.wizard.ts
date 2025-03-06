@@ -1,3 +1,4 @@
+// src/telegram/wizards/watchlist/rename-watchlist.wizard.ts
 import { Scenes } from 'telegraf';
 import { Logger } from '@nestjs/common';
 import { CustomContext } from '../../interfaces/custom-context.interface';
@@ -7,6 +8,7 @@ import { showSuccessToast, showErrorToast } from '../../components/feedback.comp
 import { WatchlistService } from '../../services/watchlist.service';
 import { createGoBackButton } from '../../constants/buttons.constant';
 import { Markup } from 'telegraf';
+import { showWatchlistMenu } from '../../menus/sub.menu/watchlist.menu';
 
 // Create logger
 const logger = new Logger('RenameWatchlistWizard');
@@ -39,6 +41,7 @@ export const createRenameWatchlistWizard = (watchlistService: WatchlistService) 
         if (watchlists.length === 0) {
           await ctx.reply('You don\'t have any watchlists to rename. Create one first!');
           ctx.scene.leave();
+          await showWatchlistMenu(ctx);
           return;
         }
         
@@ -64,6 +67,7 @@ export const createRenameWatchlistWizard = (watchlistService: WatchlistService) 
         logger.error(`Error in rename watchlist wizard: ${error.message}`);
         await showErrorToast(ctx, 'Failed to load watchlists. Please try again.');
         ctx.scene.leave();
+        await showWatchlistMenu(ctx);
       }
     },
     // Step 2: Ask for new name
@@ -86,6 +90,7 @@ export const createRenameWatchlistWizard = (watchlistService: WatchlistService) 
         if (!watchlistId || !newWatchlistName) {
           await showErrorToast(ctx, 'Missing watchlist information.');
           ctx.scene.leave();
+          await showWatchlistMenu(ctx);
           return;
         }
         
@@ -103,25 +108,18 @@ export const createRenameWatchlistWizard = (watchlistService: WatchlistService) 
         
         await showSuccessToast(ctx, `Watchlist renamed from "${currentWatchlistName}" to "${newWatchlistName}"!`);
         
-        // Display watchlist menu
-        const messageText = `Watchlist renamed successfully!`;
-        const keyboard = Markup.inlineKeyboard([
-          [
-            Markup.button.callback('View Watchlists', 'show_watchlist'),
-            Markup.button.callback('Rename Another', 'rename_watchlist')
-          ],
-          [createGoBackButton()]
-        ]);
+        // Display success message
+        await ctx.reply(`Watchlist renamed successfully!`);
         
-        await ctx.reply(messageText, {
-          reply_markup: keyboard.reply_markup
-        });
+        // Return to watchlist menu
+        await showWatchlistMenu(ctx);
         
         ctx.scene.leave();
       } catch (error) {
         logger.error(`Error renaming watchlist: ${error.message}`);
         await showErrorToast(ctx, 'Failed to rename watchlist. Please try again.');
         ctx.scene.leave();
+        await showWatchlistMenu(ctx);
       }
     }
   );
@@ -161,6 +159,7 @@ export const createRenameWatchlistWizard = (watchlistService: WatchlistService) 
       logger.error(`Error handling watchlist selection: ${error.message}`);
       await ctx.answerCbQuery('Error selecting watchlist');
       ctx.scene.leave();
+      await showWatchlistMenu(ctx);
     }
   });
   
@@ -197,6 +196,7 @@ export const createRenameWatchlistWizard = (watchlistService: WatchlistService) 
         await renameWatchlistWizard.middleware()[currentIndex](ctx, async () => {});
       } else {
         ctx.scene.leave();
+        await showWatchlistMenu(ctx);
       }
     }
   );
@@ -207,34 +207,7 @@ export const createRenameWatchlistWizard = (watchlistService: WatchlistService) 
     await ctx.scene.leave();
     
     // Return to the watchlist menu
-    const messageText = 'Watchlist Menu';
-    const keyboard = Markup.inlineKeyboard([
-      [
-        Markup.button.callback('Show Watchlists', 'show_watchlist'),
-        Markup.button.callback('Create Watchlist', 'create_watchlist')
-      ],
-      [
-        Markup.button.callback('Rename Watchlist', 'rename_watchlist'),
-        Markup.button.callback('Delete Watchlist', 'delete_watchlist')
-      ],
-      [createGoBackButton()]
-    ]);
-    
-    if (ctx.callbackQuery) {
-      try {
-        await ctx.editMessageText(messageText, {
-          reply_markup: keyboard.reply_markup,
-        });
-      } catch (error) {
-        await ctx.reply(messageText, {
-          reply_markup: keyboard.reply_markup,
-        });
-      }
-    } else {
-      await ctx.reply(messageText, {
-        reply_markup: keyboard.reply_markup,
-      });
-    }
+    await showWatchlistMenu(ctx);
   });
   
   return renameWatchlistWizard;

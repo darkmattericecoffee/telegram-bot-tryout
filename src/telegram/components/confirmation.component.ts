@@ -1,3 +1,4 @@
+// src/telegram/components/confirmation.component.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { Markup } from 'telegraf';
 import { CustomContext } from '../interfaces/custom-context.interface';
@@ -8,6 +9,7 @@ export interface ConfirmationConfig {
   confirmButtonText?: string;
   cancelButtonText?: string;
   confirmCallbackData?: string;
+  parse_mode?: string; // Add parse_mode to the interface
 }
 
 @Injectable()
@@ -24,9 +26,10 @@ export class ConfirmationComponent {
       message,
       confirmButtonText = 'Confirm',
       cancelButtonText = '← Go Back',
-      confirmCallbackData = 'confirmation_confirm'
+      confirmCallbackData = 'confirmation_confirm',
+      parse_mode = 'Markdown'
     } = config;
-    
+
     // Create buttons with confirm and cancel options
     const buttons = [
       [
@@ -34,29 +37,29 @@ export class ConfirmationComponent {
         Markup.button.callback(cancelButtonText, 'go_back')
       ]
     ];
-    
+
     const keyboard = Markup.inlineKeyboard(buttons);
-    
+
     // Send or edit message with the confirmation
     if (ctx.callbackQuery) {
       try {
         await ctx.editMessageText(message, {
           reply_markup: keyboard.reply_markup,
-          parse_mode: 'Markdown'
+          parse_mode: parse_mode as any
         });
       } catch (error) {
         await ctx.reply(message, {
           reply_markup: keyboard.reply_markup,
-          parse_mode: 'Markdown'
+          parse_mode: parse_mode as any
         });
       }
     } else {
       await ctx.reply(message, {
         reply_markup: keyboard.reply_markup,
-        parse_mode: 'Markdown'
+        parse_mode: parse_mode as any
       });
     }
-    
+
     this.logger.log(`Prompted user for confirmation: ${message}`);
   }
 }
@@ -73,10 +76,9 @@ export function registerConfirmationHandler(
   nextStep: (ctx: CustomContext) => Promise<void>
 ) {
   // Set up a handler for the confirmation button
-  wizard.action(confirmCallbackData, async (ctx) => {
+  wizard.action(confirmCallbackData, async (ctx: CustomContext) => {
     await ctx.answerCbQuery('Confirmed');
     return nextStep(ctx);
   });
-  
   // The 'go_back' action is typically handled globally in the wizard
 }

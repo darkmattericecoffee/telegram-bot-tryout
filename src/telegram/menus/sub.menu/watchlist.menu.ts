@@ -22,6 +22,9 @@ export async function showWatchlistMenu(ctx: CustomContext) {
       Markup.button.callback('✏️ Rename Watchlist', 'rename_watchlist'),
       Markup.button.callback('🗑️ Delete Watchlist', 'delete_watchlist')
     ],
+    [
+      Markup.button.callback('💰 Add Coin to Watchlist', 'add_coin_to_watchlist')
+    ],
     [createGoBackButton()]
   ]);
   
@@ -58,8 +61,9 @@ export async function showWatchlistMenu(ctx: CustomContext) {
 export function registerWatchlistMenuHandlers(bot: any) {
   logger.log('Registering watchlist menu handlers');
   
-  // Show watchlist menu
-  bot.action('watchlist_menu', async (ctx: CustomContext) => {
+  // Show watchlist submenu
+  bot.action('watchlist_submenu', async (ctx: CustomContext) => {
+    logger.log('Watchlist submenu action triggered');
     await showWatchlistMenu(ctx);
   });
   
@@ -86,5 +90,11 @@ export function registerWatchlistMenuHandlers(bot: any) {
     logger.log('Delete watchlist action triggered');
     await ctx.answerCbQuery();
     await ctx.scene.enter('delete-watchlist-wizard');
+  });
+  
+  bot.action('add_coin_to_watchlist', async (ctx: CustomContext) => {
+    logger.log('Add coin to watchlist action triggered');
+    await ctx.answerCbQuery();
+    await ctx.scene.enter('add-to-watchlist-wizard');
   });
 }
