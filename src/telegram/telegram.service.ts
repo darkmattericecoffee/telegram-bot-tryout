@@ -1,4 +1,4 @@
-// src/telegram/telegram.service.ts - Updated with new alert wizards
+// src/telegram/telegram.service.ts - Fully refactored alert functionality
 import { Injectable, OnModuleInit, Inject, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Telegraf, session, Scenes } from 'telegraf';
@@ -15,6 +15,7 @@ import { ChartingWizard } from './wizards/charting.wizard';
 import { ActionButtonsHandler } from './components/action-buttons.component';
 import { CoinSearchService } from './services/coin-search.service';
 import { AlertService } from './services/alert.service';
+import { WatchlistService } from './services/watchlist.service';
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
@@ -26,25 +27,21 @@ export class TelegramService implements OnModuleInit {
     private configService: ConfigService,
     private coinSearchService: CoinSearchService,
     private alertService: AlertService,
+    private watchlistService: WatchlistService,
     // Watchlist wizard injections
     @Inject('SHOW_WATCHLIST_WIZARD') private readonly showWatchlistWizard: any,
     @Inject('CREATE_WATCHLIST_WIZARD') private readonly createWatchlistWizard: any,
     @Inject('RENAME_WATCHLIST_WIZARD') private readonly renameWatchlistWizard: any,
     @Inject('DELETE_WATCHLIST_WIZARD') private readonly deleteWatchlistWizard: any,
     @Inject('ADD_TO_WATCHLIST_WIZARD') private readonly addToWatchlistWizard: any,
-    // Alert wizard injections
-    @Inject('SHOW_WATCHLIST_ALERTS_WIZARD') private readonly showWatchlistAlertsWizard: any,
-    @Inject('SHOW_DISCOVERY_ALERTS_WIZARD') private readonly showDiscoveryAlertsWizard: any,
-    @Inject('DELETE_ALERT_WIZARD') private readonly deleteAlertWizard: any,
+    // Alert wizard injections - refactored
     @Inject('CREATE_ALERT_WIZARD') private readonly createAlertWizard: any,
-    // New specialized alert wizards
-    @Inject('MARKET_TRANSITIONS_WIZARD') private readonly marketTransitionsWizard: any,
-    @Inject('LEVEL_BREAKS_WIZARD') private readonly levelBreaksWizard: any,
-    @Inject('DISCOVERY_ALERT_WIZARD') private readonly discoveryAlertWizard: any,
+    @Inject('SHOW_ALL_ALERTS_WIZARD') private readonly showAllAlertsWizard: any,
   ) {
     this.bot = new Telegraf<CustomContext>(
       this.configService.get<string>('TELEGRAM_BOT_TOKEN') || '',
     );
+    
     // Add middleware to handle toast
     this.bot.use(async (ctx: CustomContext, next) => {
       ctx.toast = async (message: string) => {
@@ -58,7 +55,39 @@ export class TelegramService implements OnModuleInit {
       };
       await next();
     });
+    this.bot.use((ctx: CustomContext, next) => {
+      // First ensure session exists
+      if (!ctx.session) {
+        ctx.session = {}; // Initialize empty session object if it doesn't exist
+      }
+      
+      // Store injected services in session to ensure they persist between wizard steps
+      if ((ctx as any).alertService && !(ctx.session as any).alertService) {
+        this.logger.log('Storing alertService in session');
+        (ctx.session as any).alertService = (ctx as any).alertService;
+      }
+      
+      if ((ctx as any).watchlistService && !(ctx.session as any).watchlistService) {
+        this.logger.log('Storing watchlistService in session');
+        (ctx.session as any).watchlistService = (ctx as any).watchlistService;
+      }
+      
+      // Restore services from session if they were previously stored
+      if (!(ctx as any).alertService && (ctx.session as any).alertService) {
+        this.logger.log('Restoring alertService from session');
+        (ctx as any).alertService = (ctx.session as any).alertService;
+      }
+      
+      if (!(ctx as any).watchlistService && (ctx.session as any).watchlistService) {
+        this.logger.log('Restoring watchlistService from session');
+        (ctx as any).watchlistService = (ctx.session as any).watchlistService;
+      }
+      
+      return next();
+    });
   }
+
+  
   
   async onModuleInit() {
     this.logger.log('Initializing Telegram bot');
@@ -77,16 +106,48 @@ export class TelegramService implements OnModuleInit {
       this.renameWatchlistWizard,
       this.deleteWatchlistWizard,
       this.addToWatchlistWizard,
-      // Standard alert wizards
-      this.showWatchlistAlertsWizard,
-      this.showDiscoveryAlertsWizard,
-      this.deleteAlertWizard,
+      // Alert wizards - refactored
       this.createAlertWizard,
-      // New specialized alert wizards
-      this.marketTransitionsWizard,
-      this.levelBreaksWizard,
-      this.discoveryAlertWizard
+      this.showAllAlertsWizard,
     ]);
+    
+    // Add these new stage exit and enter middleware handlers after creating the stage
+    stage.use((ctx, next) => {
+      // Ensure session exists
+      if (!ctx.session) {
+        ctx.session = {};
+      }
+      
+      // When entering a wizard scene, check if we need to restore services
+      if (ctx.scene.current) {
+        this.logger.log(`Entering scene: ${ctx.scene.current.id}`);
+        
+        // Services might have been lost during scene transitions - restore them if needed
+        if (!(ctx as any).alertService) {
+          if ((ctx.session as any).alertService) {
+            this.logger.log('Restoring alertService during scene enter');
+            (ctx as any).alertService = (ctx.session as any).alertService;
+          } else if (this.alertService) {
+            this.logger.log('Injecting alertService during scene enter');
+            (ctx as any).alertService = this.alertService;
+            (ctx.session as any).alertService = this.alertService;
+          }
+        }
+        
+        if (!(ctx as any).watchlistService) {
+          if ((ctx.session as any).watchlistService) {
+            this.logger.log('Restoring watchlistService during scene enter');
+            (ctx as any).watchlistService = (ctx.session as any).watchlistService;
+          } else if (this.watchlistService) {
+            this.logger.log('Injecting watchlistService during scene enter');
+            (ctx as any).watchlistService = this.watchlistService;
+            (ctx.session as any).watchlistService = this.watchlistService;
+          }
+        }
+      }
+      
+      return next();
+    });
     
     this.bot.use(stage.middleware());
     
@@ -151,6 +212,11 @@ export class TelegramService implements OnModuleInit {
     // Add alert command
     this.bot.command('addalert', async (ctx) => {
       this.logger.log('Add alert command received');
+      
+      // Inject necessary services
+      (ctx as any).alertService = this.alertService;
+      (ctx as any).watchlistService = this.watchlistService;
+      
       // Enter the create alert wizard
       await ctx.scene.enter('create-alert-wizard');
     });
@@ -166,7 +232,7 @@ export class TelegramService implements OnModuleInit {
     registerAnalysisMenuHandlers(this.bot);
     registerDiscoverMenuHandlers(this.bot);
     registerSubMenuHandlers(this.bot); // Legacy sub-menu handler
-    registerAlertsMenuHandlers(this.bot, this.alertService); // New alerts menu handler
+    registerAlertsMenuHandlers(this.bot, this.alertService); // Alert menu handler
     
     // Start wizard: entering the example wizard scene
     this.bot.action('start_wizard', async (ctx) => {
@@ -186,31 +252,37 @@ export class TelegramService implements OnModuleInit {
       await ctx.scene.enter('add-to-watchlist-wizard');
     });
     
-    // Alert wizard actions
+    // Alert wizard actions - refactored
     this.bot.action('create_alert', async (ctx) => {
       this.logger.log('Create alert action triggered');
+      
+      // Inject necessary services
+      (ctx as any).alertService = this.alertService;
+      (ctx as any).watchlistService = this.watchlistService;
+      
       await ctx.scene.enter('create-alert-wizard');
     });
     
-    // New specialized alert wizard actions
-    this.bot.action('create_discovery_alert', async (ctx) => {
-      this.logger.log('Create discovery alert action triggered');
-      await ctx.scene.enter('discovery-alert-wizard');
+    this.bot.action('show_all_alerts', async (ctx) => {
+      this.logger.log('Show all alerts action triggered');
+      
+      // Inject alert service
+      (ctx as any).alertService = this.alertService;
+      
+      await ctx.scene.enter('show-all-alerts-wizard');
     });
     
+    // Placeholder actions for future alert types
     this.bot.action('create_market_transition_alert', async (ctx) => {
       this.logger.log('Create market transition alert triggered');
-      await ctx.scene.enter('market-transitions-wizard');
+      await ctx.answerCbQuery('Market transition alerts coming soon!');
+      await ctx.reply('Market transition alert creation is coming soon!');
     });
     
     this.bot.action('create_level_break_alert', async (ctx) => {
       this.logger.log('Create level break alert triggered');
-      await ctx.scene.enter('level-breaks-wizard');
-    });
-    
-    this.bot.action('delete_alert', async (ctx) => {
-      this.logger.log('Delete alert action triggered');
-      await ctx.scene.enter('delete-alert-wizard');
+      await ctx.answerCbQuery('Level break alerts coming soon!');
+      await ctx.reply('Level break alert creation is coming soon!');
     });
     
     // Handle "Add to Watchlist" button from action buttons
@@ -251,9 +323,28 @@ export class TelegramService implements OnModuleInit {
           const coinId = match[1];
           this.logger.log(`Set alert action triggered for coin: ${coinId}`);
           
-          // Enter the create alert wizard with coin ID
+          // Inject necessary services
+          (ctx as any).alertService = this.alertService;
+          (ctx as any).watchlistService = this.watchlistService;
+          
+          // Search for coin details
+          const coin = await this.coinSearchService.getCoinById(coinId);
+          
+          if (!coin) {
+            await ctx.answerCbQuery('Coin not found');
+            return;
+          }
+          
+          // Enter the create alert wizard with pre-selected coin
           await ctx.answerCbQuery('Opening alert creation...');
-          await ctx.scene.enter('create-alert-wizard', { coinId });
+          
+          // Prepare parameters for the wizard
+          const params = {
+            alertType: 'discovery',
+            selectedCoin: coin
+          };
+          
+          await ctx.scene.enter('create-alert-wizard', params);
         } else {
           await ctx.answerCbQuery('Invalid coin ID');
         }

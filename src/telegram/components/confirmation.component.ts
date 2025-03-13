@@ -3,7 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Markup } from 'telegraf';
 import { CustomContext } from '../interfaces/custom-context.interface';
 import { createGoBackButton } from '../constants/buttons.constant';
-
+import { escapeMarkdown } from '../helpers/escape-markdown';
 export interface ConfirmationConfig {
   message: string;
   confirmButtonText?: string;
@@ -77,8 +77,16 @@ export function registerConfirmationHandler(
 ) {
   // Set up a handler for the confirmation button
   wizard.action(confirmCallbackData, async (ctx: CustomContext) => {
+    // Preserve services before proceeding to next step
+    if ((ctx.session as any).alertService && !(ctx as any).alertService) {
+      (ctx as any).alertService = (ctx.session as any).alertService;
+    }
+    
+    if ((ctx.session as any).watchlistService && !(ctx as any).watchlistService) {
+      (ctx as any).watchlistService = (ctx.session as any).watchlistService;
+    }
+    
     await ctx.answerCbQuery('Confirmed');
     return nextStep(ctx);
   });
-  // The 'go_back' action is typically handled globally in the wizard
 }

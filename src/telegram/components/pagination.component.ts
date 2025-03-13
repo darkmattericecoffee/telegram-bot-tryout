@@ -48,6 +48,57 @@ export class PaginationComponent {
   private readonly logger = new Logger(PaginationComponent.name);
 
   /**
+   * Simple render function for pagination buttons
+   * 
+   * @param prefix - Prefix for callback data
+   * @param currentPage - Current page number
+   * @param totalPages - Total number of pages
+   * @returns Array of buttons for pagination
+   */
+  public render(
+    prefix: string,
+    currentPage: number,
+    totalPages: number
+  ): Array<ReturnType<typeof Markup.button.callback>> {
+    const buttons: Array<ReturnType<typeof Markup.button.callback>> = [];
+    
+    // Only show pagination if there's more than one page
+    if (totalPages <= 1) {
+      return buttons;
+    }
+    
+    // Add "Previous" button if not on first page
+    if (currentPage > 1) {
+      buttons.push(
+        Markup.button.callback(
+          '« Previous',
+          `${prefix}_page_${currentPage - 1}`
+        )
+      );
+    }
+    
+    // Add page indicator
+    buttons.push(
+      Markup.button.callback(
+        `Page ${currentPage}/${totalPages}`,
+        `${prefix}_page_current`
+      )
+    );
+    
+    // Add "Next" button if not on last page
+    if (currentPage < totalPages) {
+      buttons.push(
+        Markup.button.callback(
+          'Next »',
+          `${prefix}_page_${currentPage + 1}`
+        )
+      );
+    }
+    
+    return buttons;
+  }
+
+  /**
    * Generate pagination buttons based on configuration
    * 
    * @param config - Pagination configuration
@@ -276,6 +327,55 @@ export function registerPaginationHandlers(
   
   scene.action(`${callbackPrefix}_page_ellipsis_end`, async (ctx: CustomContext) => {
     await ctx.answerCbQuery();
+  });
+  
+  // Add compatibility with the simpler prev/next pattern
+  scene.action(new RegExp(`^${callbackPrefix}_prev_(\\d+)$`), async (ctx: CustomContext) => {
+    try {
+      // Extract current page from callback data
+      const match = new RegExp(`^${callbackPrefix}_prev_(\\d+)$`).exec(
+        ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : ''
+      );
+      
+      if (!match) return;
+      
+      const currentPage = parseInt(match[1], 10);
+      const prevPage = currentPage - 1;
+      
+      logger.log(`Pagination: navigating to previous page ${prevPage}`);
+      
+      // Call the page change handler
+      await onPageChange(ctx, prevPage);
+      
+      await ctx.answerCbQuery();
+    } catch (error) {
+      logger.error(`Error handling pagination: ${error.message}`);
+      await ctx.answerCbQuery('Error changing page');
+    }
+  });
+  
+  scene.action(new RegExp(`^${callbackPrefix}_next_(\\d+)$`), async (ctx: CustomContext) => {
+    try {
+      // Extract current page from callback data
+      const match = new RegExp(`^${callbackPrefix}_next_(\\d+)$`).exec(
+        ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : ''
+      );
+      
+      if (!match) return;
+      
+      const currentPage = parseInt(match[1], 10);
+      const nextPage = currentPage + 1;
+      
+      logger.log(`Pagination: navigating to next page ${nextPage}`);
+      
+      // Call the page change handler
+      await onPageChange(ctx, nextPage);
+      
+      await ctx.answerCbQuery();
+    } catch (error) {
+      logger.error(`Error handling pagination: ${error.message}`);
+      await ctx.answerCbQuery('Error changing page');
+    }
   });
 }
 

@@ -1,331 +1,671 @@
 // src/telegram/wizards/alerts/create-alert.wizard.ts
 import { Scenes } from 'telegraf';
 import { Logger } from '@nestjs/common';
-import { CustomContext } from '../../interfaces/custom-context.interface';
-import { ConfirmationComponent, registerConfirmationHandler } from '../../components/confirmation.component';
-import { showSuccessToast, showErrorToast } from '../../components/feedback.component';
-import { AlertService, AlertType, TimeFrame, Pairing } from '../../services/alert.service';
-import { WatchlistService } from '../../services/watchlist.service';
-import { CoinSearchComponent, CoinSearchConfig } from '../../components/coin-search.component';
-import { CoinSearchService } from '../../services/coin-search.service';
-import { createGoBackButton } from '../../constants/buttons.constant';
-import { Markup } from 'telegraf';
-import { showAlertsMenu } from '../../menus/sub.menu/alerts.menu';
-import { LoadingMessageComponent, withLoading } from '../../components/loading-message.component';
-import { TextInputComponent, registerTextInputHandlers } from '../../components/text-input.component';
-
-// Create logger
+import { CustomContext, WizardState } from 'src/telegram/interfaces/custom-context.interface';
+import { pickerComponent } from 'src/telegram/components/picker.component/picker.component';
+import { optionsComponent } from 'src/telegram/components/options.component/options.component';
+import { responseComponent } from 'src/telegram/components/response.component/response.component';
+import { ConfirmationComponent, registerConfirmationHandler } from 'src/telegram/components/confirmation.component';
+import { CoinSearchComponent, CoinSearchConfig, CoinSearchState } from 'src/telegram/components/coin-search.component';
+import { CoinSearchService } from 'src/telegram/services/coin-search.service';
+import { MultiPickerComponent, MultiPickerCallbackHandler, MultiPickerState } from 'src/telegram/components/multi-picker.component';
+import { PairTimePickerComponent, PairTimePickerComponentCallbackHandler, PickerState } from 'src/telegram/components/pair-time-picker.component';
+import { OptionsService, OptionsType } from 'src/telegram/services/options.service';
+import { AlertService, AlertType, AlertNotificationType } from 'src/telegram/services/alert.service';
+import { showAlertsMenu } from 'src/telegram/menus/sub.menu/alerts.menu';
+import { WatchlistService } from 'src/telegram/services/watchlist.service';
+import { escapeMarkdown } from 'src/telegram/helpers/escape-markdown';
+// Create logger for wizard
 const logger = new Logger('CreateAlertWizard');
 
-// Initialize components
+// Initialize components and services
 const confirmationComponent = new ConfirmationComponent();
-const loadingMessageComponent = new LoadingMessageComponent();
-const textInputComponent = new TextInputComponent();
+const coinSearchComponent = new CoinSearchComponent(new CoinSearchService());
+const multiPicker = new MultiPickerComponent();
+const multiPickerHandler = new MultiPickerCallbackHandler();
+const combinedPicker = new PairTimePickerComponent();
+const combinedPickerHandler = new PairTimePickerComponentCallbackHandler();
+const optionsService = new OptionsService();
 
-// Define a proper type for scene state
-interface CreateAlertSceneState {
-  isDiscoveryAlert?: boolean;
-  coinId?: string;
-  watchlistId?: string;
-  [key: string]: any;
+// Step 1: Alert Type Selection (Watchlist or Specific Coin)
+async function step1(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 1;
+  logger.log('Entering step 1: Alert type selection');
+
+  // Ensure services are available
+  const alertService = (ctx as any).alertService as AlertService;
+  const watchlistService = (ctx as any).watchlistService as WatchlistService;
+
+  if (!alertService || !watchlistService) {
+    logger.error('Services not properly injected into context');
+    await ctx.reply('An error occurred. Please try again later.');
+    await ctx.scene.leave();
+    return showAlertsMenu(ctx);
+  }
+
+  // Get alert limits
+  const limits = alertService.getAlertsLimits();
+  
+  const pickerConfig = {
+    text: '🔔 *Create New Alert*\n\nWould you like to set up an alert for a specific coin or an entire watchlist?',
+    options: [
+      { label: '💰 Specific Coin', action: 'alert_type_coin' },
+      { label: '📋 Watchlist', action: 'alert_type_watchlist' },
+    ],
+  };
+
+  await pickerComponent(ctx, pickerConfig);
 }
 
-/**
- * CreateAlertWizard - Guides user through creating a new alert
- */
-export const createCreateAlertWizard = (
-  alertService: AlertService,
-  watchlistService: WatchlistService,
-  coinSearchService: CoinSearchService
-) => {
-  // Initialize the coin search component
-  const coinSearchComponent = new CoinSearchComponent(coinSearchService);
+// Step 2: Skipping directly to Coin Search or Watchlist Selection step
+// We'll remove the Alert Name step and generate a default name later
+
+// Step 3a: Coin Search Component - If user chose specific coin
+async function step3Coin(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 3;
+  logger.log('Entering step 3: Coin search prompt');
   
-  const createAlertWizard = new Scenes.WizardScene<CustomContext>(
-    'create-alert-wizard',
-    // Step 1: Ask user to select alert type (watchlist or discovery)
-    async (ctx) => {
-      logger.log('Step 1: Entering create alert wizard');
-      
+  const searchConfig: CoinSearchConfig = {
+    promptText: '🔍 *Search for a cryptocurrency:*\n\nPlease enter the name or symbol of the coin you want to track.',
+    fieldName: 'selectedCoin',
+    confidenceThreshold: 2.5,
+    searchCallbackPrefix: 'alertcoinsearch'
+  };
+  
+  await coinSearchComponent.prompt(ctx, searchConfig);
+}
+
+// Step 3b: Show coin search results
+async function step3CoinResults(ctx: CustomContext) {
+  logger.log('Entering step 3b: Showing coin search results');
+  
+  // Get the current search state
+  const searchState = ctx.wizard.state.parameters.coinSearchState as CoinSearchState;
+  
+  if (!searchState) {
+    logger.error('Search state is missing, returning to search prompt');
+    return step3Coin(ctx);
+  }
+  
+  // Show the search results
+  await coinSearchComponent.showResults(ctx, searchState, 'alertcoinsearch');
+}
+
+// Step 3c: Watchlist Selection - If user chose watchlist
+async function step3Watchlist(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 3;
+  logger.log('Entering step 3: Watchlist selection');
+  
+  // Extract watchlist service from context
+  const watchlistService = (ctx as any).watchlistService as WatchlistService;
+  
+  if (!watchlistService) {
+    logger.error('Watchlist service not properly injected');
+    await ctx.reply('An error occurred. Please try again later.');
+    await ctx.scene.leave();
+    return showAlertsMenu(ctx);
+  }
+  
+  try {
+    // Get user's watchlists using the correct method signature
+    const telegramId = ctx.from?.id.toString() || 'unknown';
+    const isGroup = false; // Since this is for a user's watchlists
+    const watchlists = await watchlistService.getWatchlists(telegramId, isGroup);
+    
+    if (!watchlists || watchlists.length === 0) {
+      // No watchlists found, prompt to create one first
+      await ctx.reply('You don\'t have any watchlists yet. Please create a watchlist first.');
+      await ctx.scene.leave();
+      return showAlertsMenu(ctx);
+    }
+    
+    // Convert watchlists to options
+    const options = watchlists.map(watchlist => ({
+      label: `${watchlist.name} (${watchlist.coins.length} coins)`,
+      action: `select_watchlist_${watchlist.id}`
+    }));
+    
+    const pickerConfig = {
+      text: '📋 *Select a Watchlist*\n\nChoose a watchlist to set up alerts for:',
+      options
+    };
+    
+    await pickerComponent(ctx, pickerConfig);
+  } catch (error) {
+    logger.error(`Error fetching watchlists: ${error.message}`);
+    await ctx.reply('An error occurred while fetching your watchlists. Please try again.');
+    await ctx.scene.leave();
+    return showAlertsMenu(ctx);
+  }
+}
+
+// Step 4: Notification Type Selection
+async function step4(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 4;
+  logger.log('Entering step 4: Notification type selection');
+  
+  // Notification type selection with shorter button text to avoid truncation
+  const pickerConfig = {
+    text: '📈 *Alert Type Selection*\n\nHow would you like to be notified?',
+    options: [
+      { label: '🌟 Horizon Score', action: 'notification_type_horizon' },
+      { label: '📊 Indicators', action: 'notification_type_indicators' },
+    ],
+  };
+
+  await pickerComponent(ctx, pickerConfig);
+}
+
+// Step 5: Indicator Selection (Only if Individual Indicators selected)
+async function step5Indicators(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 5;
+  logger.log('Entering step 5: Indicators multi-picker');
+  
+  // Initialize multi-picker state if not exists
+  if (!ctx.wizard.state.parameters.multiPickerState) {
+    ctx.wizard.state.parameters.multiPickerState = {
+      selectedOptions: [],
+      type: OptionsType.INDICATORS
+    };
+  }
+  
+  try {
+    // Fetch available indicators from the service
+    const options = await optionsService.getOptions(OptionsType.INDICATORS);
+    
+    // Store options in wizard state for later use in callbacks
+    ctx.wizard.state.parameters.availableOptions = options;
+    ctx.wizard.state.parameters.optionsLimit = 3; // Set maximum selection limit
+    
+    // Show the multi-picker with current selection
+    const messageText = '📊 *Select Indicators*\n\nChoose up to 3 indicators for your alert:';
+    const keyboard = multiPicker.render(
+      'alertmultipicker', 
+      ctx.wizard.state.parameters.multiPickerState,
+      options,
+      ctx.wizard.state.parameters.optionsLimit
+    );
+    
+    if (ctx.callbackQuery) {
       try {
-        // Initialize wizard state
-        ctx.wizard.state.parameters = {};
-        
-        // Check if we have a preset from scene state
-        const sceneState = ctx.scene.state as CreateAlertSceneState || {};
-        
-        // If discovery alert is specified, skip to step 3
-        if (sceneState.isDiscoveryAlert === true) {
-          logger.log('Discovery alert specified, skipping to discovery alert setup');
-          ctx.wizard.state.parameters.isDiscoveryAlert = true;
-          return await setupDiscoveryAlert(ctx);
-        }
-        
-        // If a coin ID is provided, skip to selecting a watchlist
-        if (sceneState.coinId) {
-          logger.log(`Coin ID provided: ${sceneState.coinId}`);
-          
-          // Load coin details
-          await withLoading(
-            ctx,
-            async () => {
-              // Fetch coin details
-              const coinDetails = await coinSearchService.getCoinById(sceneState.coinId || '');
-              
-              if (coinDetails) {
-                // Store in wizard state
-                ctx.wizard.state.parameters.selectedCoin = coinDetails;
-                logger.log(`Coin details loaded: ${coinDetails.name}`);
-                
-                // Set flag that this is a watchlist alert
-                ctx.wizard.state.parameters.isDiscoveryAlert = false;
-                
-                // Skip to watchlist selection
-                if (sceneState.watchlistId) {
-                  // Watchlist already specified
-                  ctx.wizard.state.parameters.selectedWatchlistId = sceneState.watchlistId;
-                  
-                  // Load watchlist details
-                  const watchlist = await watchlistService.getWatchlistById(sceneState.watchlistId || '');
-                  
-                  if (watchlist) {
-                    ctx.wizard.state.parameters.selectedWatchlistName = watchlist.name;
-                    
-                    // Skip to alert type selection
-                    return await showAlertTypeOptions(ctx);
-                  }
-                }
-                
-                // No watchlist specified or not found, show watchlist selection
-                return await showWatchlistSelection(ctx, watchlistService);
-              } else {
-                logger.error(`Coin with ID ${sceneState.coinId} not found`);
-                await ctx.reply('Could not find the selected coin.');
-                // Continue with regular flow
-              }
-            },
-            {
-              messages: [
-                'Loading coin details...',
-                'Fetching cryptocurrency information...',
-                'Getting coin data...'
-              ],
-              emoji: '🔍'
-            }
-          );
-        }
-        
-        // No presets, ask user to select alert type
-        const messageText = '🔔 *Create New Alert*\n\nWhat type of alert would you like to create?';
-        
-        const keyboard = Markup.inlineKeyboard([
-          [
-            Markup.button.callback('📋 Watchlist Alert', 'select_alert_watchlist'),
-            Markup.button.callback('🔎 Discovery Alert', 'select_alert_discovery')
-          ],
-          [createGoBackButton()]
-        ]);
-        
+        await ctx.editMessageText(messageText, {
+          reply_markup: keyboard.reply_markup,
+          parse_mode: 'Markdown'
+        });
+      } catch (error) {
         await ctx.reply(messageText, {
           reply_markup: keyboard.reply_markup,
           parse_mode: 'Markdown'
         });
-        
-        return ctx.wizard.next();
-      } catch (error) {
-        logger.error(`Error in create alert wizard: ${error.message}`);
-        await showErrorToast(ctx, 'Failed to start Create Alert wizard. Please try again.');
-        await ctx.scene.leave();
-        await showAlertsMenu(ctx);
       }
-    },
-    
-    // Step 2: Handle selections and show appropriate next screens
-    async (ctx) => {
-      // This step is just for handling actions
-      return ctx.wizard.next();
-    },
-    
-    // Step 3: Collect alert parameters
-    async (ctx) => {
-      // This step handles collecting alert parameters
-      return ctx.wizard.next();
-    },
-    
-    // Step 4: Confirm alert details
-    async (ctx) => {
-      // This step handles showing alert confirmation
-      return ctx.wizard.next();
-    },
-    
-    // Step 5: Create the alert
-    async (ctx) => {
-      logger.log('Step 5: Creating the alert');
-      
-      try {
-        const parameters = ctx.wizard.state.parameters;
-        
-        if (!parameters.alertType || 
-            !parameters.threshold || 
-            !parameters.timeframe || 
-            !parameters.pairing) {
-          await showErrorToast(ctx, 'Missing required alert parameters.');
-          await ctx.scene.leave();
-          await showAlertsMenu(ctx);
-          return;
-        }
-        
-        // Get the telegram ID
-        const telegramId = String(ctx.from?.id || '');
-        const isGroup = false; // Assume personal chat
-        
-        // Prepare alert creation DTO
-        const createAlertDto: any = {
-          userId: telegramId, // For mock service, we use telegramId as userId too
-          telegramUserId: telegramId,
-          alertType: parameters.alertType,
-          threshold: parameters.threshold,
-          timeframe: parameters.timeframe,
-          pairing: parameters.pairing,
-          message: parameters.alertMessage || '',
-          isDiscoveryAlert: parameters.isDiscoveryAlert
-        };
-        
-        // Add coin identifier for watchlist alerts
-        if (!parameters.isDiscoveryAlert && parameters.selectedCoin) {
-          createAlertDto.coinIdentifier = parameters.selectedCoin.identifier || parameters.selectedCoin.id;
-        }
-        
-        // Add watchlist ID for watchlist alerts
-        if (!parameters.isDiscoveryAlert && parameters.selectedWatchlistId) {
-          createAlertDto.watchlistId = parameters.selectedWatchlistId;
-        }
-        
-        // Create the alert with loading indicator
-        await withLoading(
-          ctx,
-          async () => {
-            // Create the alert
-            const newAlert = await alertService.createAlert(createAlertDto);
-            
-            // Prepare success message
-            let successMessage = '';
-            
-            if (parameters.isDiscoveryAlert) {
-              successMessage = `Discovery Alert created for ${AlertService.getAlertTypeName(parameters.alertType)}!`;
-            } else {
-              const coinName = parameters.selectedCoin?.name || 'Unknown Coin';
-              const watchlistName = parameters.selectedWatchlistName || 'your watchlist';
-              successMessage = `Alert created for ${coinName} in ${watchlistName}!`;
-            }
-            
-            await showSuccessToast(ctx, successMessage);
-            
-            // Show detailed success message
-            const detailMessage = parameters.isDiscoveryAlert
-              ? `🔔 *Discovery Alert Created*\n\nType: ${AlertService.getAlertTypeName(parameters.alertType)}\nThreshold: ${parameters.threshold}\nTimeframe: ${AlertService.getTimeFrameName(parameters.timeframe)}\nPairing: ${parameters.pairing}`
-              : `🔔 *Watchlist Alert Created*\n\nCoin: ${parameters.selectedCoin?.name}\nType: ${AlertService.getAlertTypeName(parameters.alertType)}\nThreshold: ${parameters.threshold}\nTimeframe: ${AlertService.getTimeFrameName(parameters.timeframe)}\nWatchlist: ${parameters.selectedWatchlistName}`;
-              
-            await ctx.reply(detailMessage, { parse_mode: 'Markdown' });
-          },
-          {
-            messages: [
-              'Creating your alert...',
-              'Setting up alert parameters...',
-              'Configuring alert settings...',
-              'Almost done...'
-            ],
-            emoji: '🔔'
-          }
-        );
-        
-        // Return to alerts menu
-        await showAlertsMenu(ctx);
-        
-        return ctx.scene.leave();
-      } catch (error) {
-        logger.error(`Error creating alert: ${error.message}`);
-        await showErrorToast(ctx, `Failed to create alert: ${error.message}`);
-        await ctx.scene.leave();
-        await showAlertsMenu(ctx);
-        return;
-      }
+    } else {
+      await ctx.reply(messageText, {
+        reply_markup: keyboard.reply_markup,
+        parse_mode: 'Markdown'
+      });
     }
+  } catch (error) {
+    logger.error(`Error fetching options: ${error.message}`);
+    await ctx.reply('An error occurred. Please try again.');
+    // Skip to pairing selection as fallback
+    return step6(ctx);
+  }
+}
+
+// Step 6: Pair and Timeframe Selection
+async function step6(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 6;
+  logger.log('Entering step 6: Pair/timeframe picker');
+  
+  // Set or initialize the picker state
+  if (!ctx.wizard.state.parameters.pickerState) {
+    ctx.wizard.state.parameters.pickerState = {
+      selectedPairing: 'USD',
+      selectedTimeframe: '1D'
+    };
+  }
+  
+  // Show the combined picker with current selection
+  const messageText = '⏱️ *Select Currency Pair and Timeframe*\n\nChoose the trading pair and time interval for your alert:';
+  const keyboard = combinedPicker.render('alertpicker', ctx.wizard.state.parameters.pickerState);
+  
+  if (ctx.callbackQuery) {
+    try {
+      await ctx.editMessageText(messageText, {
+        reply_markup: keyboard.reply_markup,
+        parse_mode: 'Markdown'
+      });
+    } catch (error) {
+      await ctx.reply(messageText, {
+        reply_markup: keyboard.reply_markup,
+        parse_mode: 'Markdown'
+      });
+    }
+  } else {
+    await ctx.reply(messageText, {
+      reply_markup: keyboard.reply_markup,
+      parse_mode: 'Markdown'
+    });
+  }
+}
+
+// Step 7: Confirmation
+async function step7(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 7;
+  logger.log('Entering step 7: Confirmation');
+  
+  // Extract details for the confirmation message
+  const { 
+    alertType, 
+    pickerState,
+    multiPickerState,
+    notificationType
+  } = ctx.wizard.state.parameters;
+  
+  // Generate default alert name based on selected coin/watchlist and alert type
+  let alertName = '';
+  if (alertType === AlertType.WATCHLIST) {
+    const watchlist = ctx.wizard.state.parameters.selectedWatchlist;
+    alertName = `${watchlist.name} Alert`;
+  } else {
+    const coin = ctx.wizard.state.parameters.selectedCoin;
+    alertName = `${coin.name} (${coin.symbol}) Alert`;
+  }
+  
+  // Store the auto-generated name
+  ctx.wizard.state.parameters.alertName = alertName;
+  
+  const pair = pickerState?.selectedPairing || 'USD';
+  const timeframe = pickerState?.selectedTimeframe || '1D';
+  
+  // Alert target information
+  let targetInfo = '';
+  if (alertType === AlertType.WATCHLIST) {
+    const watchlist = ctx.wizard.state.parameters.selectedWatchlist;
+    targetInfo = `Watchlist: ${watchlist.name}`;
+  } else {
+    const coin = ctx.wizard.state.parameters.selectedCoin;
+    targetInfo = `Coin: ${coin.name} (${coin.symbol})`;
+  }
+  
+  // Notification type and indicators - with consistent short labels
+  let notificationInfo = '';
+  if (notificationType === AlertNotificationType.HORIZON_SCORE) {
+    notificationInfo = 'Notification: Horizon Score';
+  } else {
+    const indicators = multiPickerState?.selectedOptions || [];
+    notificationInfo = `Notification: Indicators\nIndicators: ${indicators.length > 0 ? indicators.join(', ') : 'None'}`;
+  }
+  
+  // Build a summary message for confirmation
+  const confirmationMessage = `
+*Please confirm your alert settings:*
+
+• Alert Name: ${escapeMarkdown(alertName)}
+• ${escapeMarkdown(targetInfo)}
+• ${escapeMarkdown(notificationInfo)}
+• Pair: ${escapeMarkdown(pair)}
+• Timeframe: ${escapeMarkdown(timeframe)}
+
+Are you sure you want to create this alert?
+`;
+  
+  await confirmationComponent.prompt(ctx, {
+    message: confirmationMessage,
+    confirmButtonText: '✅ Create Alert',
+    cancelButtonText: '← Go Back',
+    confirmCallbackData: 'create_alert_confirm',
+    parse_mode: 'Markdown'
+  });
+}
+
+// Final Step: Create Alert and Show Response
+async function finalStep(ctx: CustomContext) {
+  (ctx.wizard.state as WizardState).step = 8;
+  logger.log('Entering final step: Creating alert');
+  
+  // Extract alert service from context
+  const alertService = (ctx as any).alertService as AlertService;
+  
+  if (!alertService) {
+    logger.error('Alert service not properly injected');
+    await ctx.reply('An error occurred. Please try again later.');
+    await ctx.scene.leave();
+    return showAlertsMenu(ctx);
+  }
+  
+  // Extract all parameters needed for alert creation
+  const { 
+    alertType, 
+    alertName,
+    notificationType,
+    pickerState,
+    multiPickerState
+  } = ctx.wizard.state.parameters;
+  
+  // Get user ID
+  const userId = ctx.from?.id.toString() || 'unknown';
+  
+  // Set target ID and name based on alert type
+  let targetId = '';
+  let targetName = '';
+  
+  if (alertType === AlertType.WATCHLIST) {
+    const watchlist = ctx.wizard.state.parameters.selectedWatchlist;
+    targetId = watchlist.id;
+    targetName = watchlist.name;
+  } else {
+    const coin = ctx.wizard.state.parameters.selectedCoin;
+    targetId = coin.id;
+    targetName = `${coin.name} (${coin.symbol})`;
+  }
+  
+  try {
+    console.log("About to create alert");
+    const newAlert = await alertService.createAlert({
+      userId,
+      name: alertName,
+      type: alertType,
+      targetId,
+      targetName,
+      notificationType,
+      indicators: notificationType === AlertNotificationType.INDIVIDUAL_INDICATORS 
+        ? multiPickerState?.selectedOptions || [] 
+        : undefined,
+      pairing: pickerState?.selectedPairing || 'USD',
+      timeframe: pickerState?.selectedTimeframe || '1D',
+      active: true
+    });
+    
+    console.log("Alert created successfully:", newAlert);
+    // Show success message
+    const responseText = `
+    ✅ *Alert Successfully Created!*
+    
+    Your alert "${escapeMarkdown(newAlert.name)}" has been set up and is now active. You will receive notifications based on your selected criteria.
+    
+    *Alert Details:*
+    - ID: ${newAlert.id}
+    - Target: ${escapeMarkdown(newAlert.targetName)}
+    - Timeframe: ${newAlert.timeframe}
+    - Created: ${newAlert.createdAt.toLocaleString()}
+    `;
+
+// Send without markdown parsing to avoid issues
+await ctx.reply(responseText);
+    
+    // Return to alerts menu
+    await ctx.scene.leave();
+    return showAlertsMenu(ctx);
+    
+  } catch (error) {
+    logger.error(`Error creating alert: ${error.message}`);
+    await ctx.reply('An error occurred while creating your alert. Please try again.');
+    await ctx.scene.leave();
+    return showAlertsMenu(ctx);
+  }
+}
+
+// Create the wizard scene
+export const createAlertWizard = new Scenes.WizardScene<CustomContext>(
+  'create-alert-wizard',
+  step1
+);
+
+// Handle all multi-picker callbacks for indicators
+createAlertWizard.action(/^alertmultipicker_.+$/, async (ctx) => {
+  // Extract the data from the callback query
+  const data = ctx.callbackQuery && 'data' in ctx.callbackQuery 
+    ? (ctx.callbackQuery as any).data 
+    : undefined;
+  if (!data) return;
+  
+  // Set up the current state for the handler
+  const currentState: MultiPickerState = ctx.wizard.state.parameters.multiPickerState || {
+    selectedOptions: [],
+    type: OptionsType.INDICATORS
+  };
+  
+  // Get available options and limit from wizard state
+  const options = ctx.wizard.state.parameters.availableOptions || [];
+  const limit = ctx.wizard.state.parameters.optionsLimit || 3;
+  
+  // Process the callback with the handler
+  const result = await multiPickerHandler.handleCallback(
+    ctx, 
+    data.replace('alertmultipicker', 'multipicker'), // Convert to standard format for handler
+    currentState,
+    options,
+    limit
   );
   
-  // Handler for alert type selection
-  createAlertWizard.action(/^select_alert_(watchlist|discovery)$/, async (ctx) => {
-    try {
-      // Extract alert type from callback data
-      const match = /^select_alert_(watchlist|discovery)$/.exec(
-        ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : ''
-      );
-      
-      if (match) {
-        const alertType = match[1];
-        logger.log(`Selected alert type: ${alertType}`);
-        
-        // Store selected alert type
-        ctx.wizard.state.parameters.isDiscoveryAlert = alertType === 'discovery';
-        
-        if (alertType === 'discovery') {
-          // Set up discovery alert
-          await setupDiscoveryAlert(ctx);
-        } else {
-          // For watchlist alert, first prompt for coin search
-          await promptForCoinSearch(ctx, coinSearchComponent);
-        }
-      }
-      
-      await ctx.answerCbQuery();
-    } catch (error) {
-      logger.error(`Error handling alert type selection: ${error.message}`);
-      await ctx.answerCbQuery('Error processing selection');
-    }
-  });
+  // Update the state in the wizard
+  ctx.wizard.state.parameters.multiPickerState = result.state;
   
-  // Handler for coin search text input
-  createAlertWizard.on('text', async (ctx) => {
-    // Only process if this is in the coin search step
-    if (ctx.wizard.cursor !== 2 || ctx.wizard.state.parameters.selectedCoin) {
-      // Check if we're awaiting an alert message
-      if (ctx.wizard.state.parameters.awaitingAlertMessage) {
-        logger.log('Received alert message text');
-        
-        // Store the alert message
-        ctx.wizard.state.parameters.alertMessage = ctx.message.text;
-        
-        // Clear the awaiting flag
-        ctx.wizard.state.parameters.awaitingAlertMessage = false;
-        
-        // Show confirmation
-        await showAlertConfirmation(ctx);
-        return;
-      }
-      
-      // Check if we're awaiting a threshold
-      if (ctx.wizard.state.parameters.awaitingThreshold) {
-        logger.log('Received threshold text');
-        
-        // Store the threshold temporarily in alertMessage field
-        ctx.wizard.state.parameters.alertMessage = ctx.message.text;
-        
-        // Show submit button again
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('Submit', 'threshold_submit')],
-          [createGoBackButton()]
-        ]);
-        
-        await ctx.reply(`Received: ${ctx.message.text}\nPress Submit to continue.`, {
-          reply_markup: keyboard.reply_markup
-        });
-        
-        return;
-      }
-      
-      return;
-    }
+  // If the user clicked "Choose", proceed to the next step
+  if (result.proceed) {
+    return step6(ctx);
+  }
+  
+  // Only redraw if necessary (e.g., don't redraw when limit is reached)
+  if (result.redraw !== false) {
+    return step5Indicators(ctx);
+  }
+});
+
+// Handle all pair-time picker callbacks
+createAlertWizard.action(/^alertpicker_.+$/, async (ctx) => {
+  // Extract the data from the callback query
+  const data = ctx.callbackQuery && 'data' in ctx.callbackQuery 
+    ? (ctx.callbackQuery as any).data 
+    : undefined;
+  if (!data) return;
+  
+  // Set up the current state for the handler
+  const currentState: PickerState = ctx.wizard.state.parameters.pickerState || {
+    selectedPairing: 'USD',
+    selectedTimeframe: '1D'
+  };
+  
+  // Process the callback with the handler
+  const result = await combinedPickerHandler.handleCallback(
+    ctx, 
+    data.replace('alertpicker', 'cmbpicker'), // Convert to standard format for handler
+    currentState
+  );
+  
+  // Update the state in the wizard
+  ctx.wizard.state.parameters.pickerState = result.state;
+  
+  // If the user clicked "Choose", proceed to the next step
+  if (result.proceed) {
+    return step7(ctx);
+  }
+  
+  // Otherwise, just redraw the same step with the updated selection
+  return step6(ctx);
+});
+
+// Register confirmation handler
+registerConfirmationHandler(createAlertWizard, 'create_alert_confirm', async (ctx) => {
+  (ctx.wizard.state as WizardState).step = 8;
+  logger.log('Entering final step: Creating alert');
+  
+  // Extract alert service from context
+  const alertService = (ctx as any).alertService as AlertService;
+  
+  if (!alertService) {
+    logger.error('Alert service not properly injected');
+    await ctx.reply('An error occurred. Please try again later.');
+    await ctx.scene.leave();
+    return showAlertsMenu(ctx);
+  }
+  
+  // Extract all parameters needed for alert creation
+  const { 
+    alertType, 
+    alertName,
+    notificationType,
+    pickerState,
+    multiPickerState
+  } = ctx.wizard.state.parameters;
+  
+  // Get user ID
+  const userId = ctx.from?.id.toString() || 'unknown';
+  
+  // Set target ID and name based on alert type
+  let targetId = '';
+  let targetName = '';
+  
+  if (alertType === AlertType.WATCHLIST) {
+    const watchlist = ctx.wizard.state.parameters.selectedWatchlist;
+    targetId = watchlist.id;
+    targetName = watchlist.name;
+  } else {
+    const coin = ctx.wizard.state.parameters.selectedCoin;
+    targetId = coin.id;
+    targetName = `${coin.name} (${coin.symbol})`;
+  }
+  
+  try {
+    logger.log(`Creating alert with service: ${!!alertService}`);
+    const newAlert = await alertService.createAlert({
+      userId,
+      name: alertName,
+      type: alertType,
+      targetId,
+      targetName,
+      notificationType,
+      indicators: notificationType === AlertNotificationType.INDIVIDUAL_INDICATORS 
+        ? multiPickerState?.selectedOptions || [] 
+        : undefined,
+      pairing: pickerState?.selectedPairing || 'USD',
+      timeframe: pickerState?.selectedTimeframe || '1D',
+      active: true
+    });
     
+    // Show success message
+    const responseText = `
+✅ Alert Successfully Created!
+
+Your alert "${escapeMarkdown(newAlert.name)}" has been set up and is now active. You will receive notifications based on your selected criteria.
+
+Alert Details:
+- ID: ${newAlert.id}
+- Target: ${escapeMarkdown(newAlert.targetName)}
+- Timeframe: ${newAlert.timeframe}
+- Created: ${newAlert.createdAt.toLocaleString()}
+    `;
+    await ctx.reply(responseText); // Send as plain text
+
+    await ctx.scene.leave();
+    return showAlertsMenu(ctx);
+  } catch (error) {
+    logger.error(`Error creating alert: ${error.message}`);
+    await ctx.reply('An error occurred while creating your alert. Please try again.');
+    await ctx.scene.leave();
+    return showAlertsMenu(ctx);
+  }
+});
+
+// Add this to the createAlertWizard wizard to ensure services are available in all steps
+createAlertWizard.use((ctx, next) => {
+  // Check if services are available in the context
+  const alertService = (ctx as any).alertService;
+  const watchlistService = (ctx as any).watchlistService;
+  
+  if (!alertService) {
+    logger.warn('Alert service missing in wizard middleware');
+    
+    // Try to restore from session
+    if ((ctx.session as any).alertService) {
+      logger.log('Restoring alertService from session in wizard middleware');
+      (ctx as any).alertService = (ctx.session as any).alertService;
+    }
+  }
+  
+  if (!watchlistService) {
+    logger.warn('Watchlist service missing in wizard middleware');
+    
+    // Try to restore from session
+    if ((ctx.session as any).watchlistService) {
+      logger.log('Restoring watchlistService from session in wizard middleware');
+      (ctx as any).watchlistService = (ctx.session as any).watchlistService;
+    }
+  }
+  
+  return next();
+});
+
+// Handle go back action for navigation
+createAlertWizard.action('go_back', async (ctx) => {
+  const wizardState = ctx.wizard.state as WizardState;
+  if (wizardState.step && wizardState.step > 1) {
+    // Determine which step to go back to
+    let previousStep = wizardState.step - 1;
+    wizardState.step = previousStep;
+    
+    logger.log(`Going back to step ${previousStep}`);
+    
+    switch (previousStep) {
+      case 1:
+        return step1(ctx);
+      case 3:
+        // Check if we're in the watchlist flow or coin flow
+        if (wizardState.parameters.alertType === AlertType.WATCHLIST) {
+          return step3Watchlist(ctx);
+        } else {
+          return step3Coin(ctx);
+        }
+      case 4:
+        return step4(ctx);
+      case 5:
+        // If we're coming from step 6 and notification type is indicators
+        if (wizardState.parameters.notificationType === AlertNotificationType.INDIVIDUAL_INDICATORS) {
+          return step5Indicators(ctx);
+        } else {
+          // Otherwise go back to notification type selection
+          return step4(ctx);
+        }
+      case 6:
+        return step6(ctx);
+      default:
+        return step1(ctx);
+    }
+  } else {
+    // If at first step, leave the scene and go back to menu
+    await ctx.answerCbQuery('Returning to menu');
+    await ctx.scene.leave();
+    return showAlertsMenu(ctx);
+  }
+});
+
+// Alert type selection handlers
+createAlertWizard.action('alert_type_coin', async (ctx) => {
+  ctx.wizard.state.parameters = { 
+    ...ctx.wizard.state.parameters, 
+    alertType: AlertType.DISCOVERY
+  };
+  await ctx.answerCbQuery('Selected: Specific Coin');
+  return step3Coin(ctx); // Skip name input, go directly to coin search
+});
+
+createAlertWizard.action('alert_type_watchlist', async (ctx) => {
+  ctx.wizard.state.parameters = { 
+    ...ctx.wizard.state.parameters, 
+    alertType: AlertType.WATCHLIST
+  };
+  await ctx.answerCbQuery('Selected: Watchlist');
+  return step3Watchlist(ctx); // Skip name input, go directly to watchlist selection
+});
+
+// Text input handler for coin search
+createAlertWizard.on('text', async (ctx) => {
+  const wizardState = ctx.wizard.state as WizardState;
+  const step = wizardState.step;
+  
+  // Handle coin search input (step 3)
+  if (step === 3 && wizardState.parameters.alertType !== AlertType.WATCHLIST) {
     logger.log('Processing text input for coin search');
     
     try {
@@ -333,737 +673,180 @@ export const createCreateAlertWizard = (
       const query = ctx.message.text;
       logger.log(`Search query: "${query}"`);
       
-      // Process the search with loading indicator
-      await withLoading(
-        ctx,
-        async () => {
-          // Configure search parameters
-          const searchConfig = {
-            promptText: '',  // Not used here
-            fieldName: 'selectedCoin',
-            confidenceThreshold: 2.5
-          };
-          
-          // Process the search
-          const state = await coinSearchComponent.processSearch(ctx, query, searchConfig);
-          
-          // Store the search state
-          ctx.wizard.state.parameters.coinSearchState = state;
-          
-          // If we have a high confidence match, store it and proceed
-          if (state.selectedCoin) {
-            logger.log(`High confidence match found: ${state.selectedCoin.name}`);
-            ctx.wizard.state.parameters.selectedCoin = state.selectedCoin;
-            
-            // Proceed to watchlist selection
-            await showWatchlistSelection(ctx, watchlistService);
-          } else {
-            // Show search results
-            logger.log('No high confidence match, showing results');
-            await coinSearchComponent.showResults(ctx, state, 'coinsearch');
-          }
-        },
-        {
-          messages: [
-            'Searching for coins...',
-            'Looking up cryptocurrency data...',
-            'Fetching market information...'
-          ],
-          emoji: '🔍'
-        }
-      );
+      // Process the search
+      const searchConfig = {
+        promptText: '',  // Not used here
+        fieldName: 'selectedCoin',
+        confidenceThreshold: 2.5
+      };
+      
+      const state = await coinSearchComponent.processSearch(ctx, query, searchConfig);
+      
+      // Store the search state
+      wizardState.parameters = {
+        ...wizardState.parameters,
+        coinSearchState: state
+      };
+      
+      // If we have a high confidence match, store it and proceed
+      if (state.selectedCoin) {
+        logger.log(`High confidence match found: ${state.selectedCoin.name}`);
+        wizardState.parameters.selectedCoin = state.selectedCoin;
+        return step4(ctx);
+      }
+      
+      // Otherwise, show results for user to choose
+      logger.log('No high confidence match, showing results');
+      return step3CoinResults(ctx);
     } catch (error) {
       logger.error(`Error processing search: ${error.message}`);
       await ctx.reply('An error occurred while searching. Please try again.');
-      await promptForCoinSearch(ctx, coinSearchComponent);
+      return step3Coin(ctx);
     }
-  });
-  
-  // Handler for coin search result selection
-  createAlertWizard.action(/^coinsearch_select_\w+$/, async (ctx) => {
-    logger.log('Coin selection action triggered');
-    
-    try {
-      // Extract coin ID from callback data
-      const callbackData = ctx.callbackQuery && 'data' in ctx.callbackQuery 
-        ? (ctx.callbackQuery as any).data
-        : '';
-      
-      const coinId = callbackData.split('_').pop();
-      logger.log(`Selected coin ID: ${coinId}`);
-      
-      // Get the search state
-      const state = ctx.wizard.state.parameters.coinSearchState;
-      
-      if (!state || !state.results) {
-        logger.error('Search state is missing');
-        await ctx.answerCbQuery('Error: Search data not found');
-        return;
-      }
-      
-      // Find the selected coin in the results
-      const selectedCoin = state.results.find(r => r.coin.id === coinId)?.coin;
-      
-      if (selectedCoin) {
-        // Store the selection
-        logger.log(`Found selected coin: ${selectedCoin.name}`);
-        ctx.wizard.state.parameters.selectedCoin = selectedCoin;
-        
-        // Notify the user
-        await ctx.answerCbQuery(`Selected ${selectedCoin.name} (${selectedCoin.symbol})`);
-        
-        // Proceed to watchlist selection
-        await showWatchlistSelection(ctx, watchlistService);
-      } else {
-        logger.error(`Coin not found with ID: ${coinId}`);
-        await ctx.answerCbQuery('Error: Coin not found');
-        
-        // Return to coin search
-        await promptForCoinSearch(ctx, coinSearchComponent);
-      }
-    } catch (error) {
-      logger.error(`Error handling coin selection: ${error.message}`);
-      await ctx.answerCbQuery('Error selecting coin');
-    }
-  });
-  
-  // Handler for watchlist selection
-  createAlertWizard.action(/^select_watchlist_(.+)$/, async (ctx) => {
-    try {
-      // Extract watchlist ID from callback data
-      const match = /^select_watchlist_(.+)$/.exec(
-        ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : ''
-      );
-      
-      if (match) {
-        const watchlistId = match[1];
-        logger.log(`Selected watchlist ID: ${watchlistId}`);
-        
-        // Get watchlist details
-        const watchlist = await watchlistService.getWatchlistById(watchlistId);
-        
-        if (!watchlist) {
-          await ctx.answerCbQuery('Watchlist not found');
-          return;
-        }
-        
-        // Store watchlist information
-        ctx.wizard.state.parameters.selectedWatchlistId = watchlistId;
-        ctx.wizard.state.parameters.selectedWatchlistName = watchlist.name;
-        
-        // Proceed to alert type selection
-        await showAlertTypeOptions(ctx);
-      }
-      
-      await ctx.answerCbQuery();
-    } catch (error) {
-      logger.error(`Error handling watchlist selection: ${error.message}`);
-      await ctx.answerCbQuery('Error selecting watchlist');
-    }
-  });
-  
-  // Handler for alert type options selection
-  createAlertWizard.action(/^alert_type_(.+)$/, async (ctx) => {
-    try {
-      // Extract alert type from callback data
-      const match = /^alert_type_(.+)$/.exec(
-        ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : ''
-      );
-      
-      if (match) {
-        const selectedAlertType = match[1];
-        logger.log(`Selected alert type: ${selectedAlertType}`);
-        
-        // Store alert type
-        ctx.wizard.state.parameters.alertType = selectedAlertType;
-        
-        // Show threshold input
-        await showThresholdInput(ctx);
-      }
-      
-      await ctx.answerCbQuery();
-    } catch (error) {
-      logger.error(`Error handling alert type selection: ${error.message}`);
-      await ctx.answerCbQuery('Error selecting alert type');
-    }
-  });
-  
-  // Handler for timeframe selection
-  createAlertWizard.action(/^timeframe_(.+)$/, async (ctx) => {
-    try {
-      // Extract timeframe from callback data
-      const match = /^timeframe_(.+)$/.exec(
-        ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : ''
-      );
-      
-      if (match) {
-        const selectedTimeframe = match[1];
-        logger.log(`Selected timeframe: ${selectedTimeframe}`);
-        
-        // Store timeframe
-        ctx.wizard.state.parameters.timeframe = selectedTimeframe;
-        
-        // Show pairing options
-        await showPairingOptions(ctx);
-      }
-      
-      await ctx.answerCbQuery();
-    } catch (error) {
-      logger.error(`Error handling timeframe selection: ${error.message}`);
-      await ctx.answerCbQuery('Error selecting timeframe');
-    }
-  });
-  
-  // Handler for pairing selection
-  createAlertWizard.action(/^pairing_(.+)$/, async (ctx) => {
-    try {
-      // Extract pairing from callback data
-      const match = /^pairing_(.+)$/.exec(
-        ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : ''
-      );
-      
-      if (match) {
-        const selectedPairing = match[1];
-        logger.log(`Selected pairing: ${selectedPairing}`);
-        
-        // Store pairing
-        ctx.wizard.state.parameters.pairing = selectedPairing;
-        
-        // Show alert message input
-        await showAlertMessageInput(ctx);
-      }
-      
-      await ctx.answerCbQuery();
-    } catch (error) {
-      logger.error(`Error handling pairing selection: ${error.message}`);
-      await ctx.answerCbQuery('Error selecting pairing');
-    }
-  });
-  
-  // Register text input handler for threshold
-  createAlertWizard.action(/^threshold_submit$/, async (ctx) => {
-    try {
-      logger.log('Threshold submitted');
-      
-      // Get the threshold from input (stored temporarily in alertMessage field)
-      const thresholdStr = ctx.wizard.state.parameters.alertMessage;
-      
-      if (!thresholdStr) {
-        await ctx.answerCbQuery('Please enter a threshold value');
-        return;
-      }
-      
-      // Validate threshold
-      const threshold = parseFloat(thresholdStr);
-      
-      if (isNaN(threshold)) {
-        await ctx.answerCbQuery('Please enter a valid number');
-        return;
-      }
-      
-      // Store threshold
-      ctx.wizard.state.parameters.threshold = threshold;
-      
-      // Clear temporary alertMessage
-      delete ctx.wizard.state.parameters.alertMessage;
-      
-      // Show timeframe options
-      await showTimeframeOptions(ctx);
-      
-      await ctx.answerCbQuery();
-    } catch (error) {
-      logger.error(`Error handling threshold submission: ${error.message}`);
-      await ctx.answerCbQuery('Error processing threshold');
-    }
-  });
-  
-  // Handler for alert message submission
-  createAlertWizard.action(/^message_submit$/, async (ctx) => {
-    try {
-      logger.log('Alert message submitted');
-      
-      // Show confirmation
-      await showAlertConfirmation(ctx);
-      
-      await ctx.answerCbQuery();
-    } catch (error) {
-      logger.error(`Error handling message submission: ${error.message}`);
-      await ctx.answerCbQuery('Error processing message');
-    }
-  });
-  
-  // Register confirmation handler
-  registerConfirmationHandler(
-    createAlertWizard,
-    'create_alert_confirm',
-    async (ctx) => {
-      // Move to the step that handles alert creation
-      ctx.wizard.selectStep(4);
-      
-      const currentIndex = ctx.wizard.cursor;
-      // Use the middleware directly
-      if (currentIndex < createAlertWizard.middleware().length) {
-        return createAlertWizard.middleware()[currentIndex](ctx, async () => {});
-      }
-      
-      await ctx.scene.leave();
-      await showAlertsMenu(ctx);
-      return;
-    }
-  );
-  
-  // Go back button handler
-  createAlertWizard.action('go_back', async (ctx) => {
-    logger.log('Go back action triggered');
-  
-    const currentStep = ctx.wizard.cursor;
-    const parameters = ctx.wizard.state.parameters;
-  
-    // Reset any awaiting input flags to prevent getting stuck
-    parameters.awaitingThreshold = false;
-    parameters.awaitingAlertMessage = false;
-  
-    // Handle navigation based on current step and state
-    if (parameters.isDiscoveryAlert) {
-      if (parameters.pairing) {
-        // Back from message input to pairing selection
-        await showPairingOptions(ctx);
-        ctx.wizard.selectStep(3); // Ensure step aligns with pairing selection
-      } else if (parameters.timeframe) {
-        // Back from pairing to timeframe
-        await showTimeframeOptions(ctx);
-        ctx.wizard.selectStep(2);
-      } else if (parameters.threshold) {
-        // Back from timeframe to threshold
-        await showThresholdInput(ctx);
-        ctx.wizard.selectStep(2);
-      } else if (parameters.alertType) {
-        // Back from threshold to alert type selection
-        await setupDiscoveryAlert(ctx);
-        ctx.wizard.selectStep(2);
-      } else {
-        // No parameters set, exit to alerts menu
-        await ctx.scene.leave();
-        await showAlertsMenu(ctx);
-      }
-    } else {
-      // Watchlist alerts
-      if (parameters.pairing) {
-        await showPairingOptions(ctx);
-        ctx.wizard.selectStep(3);
-      } else if (parameters.timeframe) {
-        await showTimeframeOptions(ctx);
-        ctx.wizard.selectStep(2);
-      } else if (parameters.threshold) {
-        await showThresholdInput(ctx);
-        ctx.wizard.selectStep(2);
-      } else if (parameters.alertType) {
-        await showAlertTypeOptions(ctx);
-        ctx.wizard.selectStep(2);
-      } else if (parameters.selectedWatchlistId) {
-        await showWatchlistSelection(ctx, watchlistService);
-        ctx.wizard.selectStep(2);
-      } else if (parameters.selectedCoin) {
-        await promptForCoinSearch(ctx, coinSearchComponent);
-        ctx.wizard.selectStep(2);
-      } else {
-        await ctx.scene.leave();
-        await showAlertsMenu(ctx);
-      }
-    }
-  
-    await ctx.answerCbQuery();
-  });
-  
-  return createAlertWizard;
-};
+  }
+});
 
-/**
- * Helper function to prompt for coin search
- */
-async function promptForCoinSearch(ctx: CustomContext, coinSearchComponent: CoinSearchComponent): Promise<void> {
-  const searchConfig: CoinSearchConfig = {
-    promptText: '🔍 *Search for a cryptocurrency:*\n\nPlease enter the name or symbol of the coin you want to set an alert for.',
-    fieldName: 'selectedCoin',
-    confidenceThreshold: 2.5,
-    searchCallbackPrefix: 'coinsearch'
-  };
+// Watchlist selection handlers
+createAlertWizard.action(/^select_watchlist_(.+)$/, async (ctx) => {
+  // Extract the watchlist ID from callback data
+  const callbackData = ctx.callbackQuery && 'data' in ctx.callbackQuery
+    ? (ctx.callbackQuery as any).data
+    : '';
+  const watchlistId = callbackData.split('_').pop();
+  logger.log(`Selected watchlist ID: ${watchlistId}`);
   
-  await coinSearchComponent.prompt(ctx, searchConfig);
-}
-
-/**
- * Helper function to show watchlist selection
- */
-async function showWatchlistSelection(ctx: CustomContext, watchlistService: WatchlistService): Promise<void> {
-  logger.log('Showing watchlist selection');
+  // Get watchlist service
+  const watchlistService = (ctx as any).watchlistService as WatchlistService;
   
-  const selectedCoin = ctx.wizard.state.parameters.selectedCoin;
-  
-  if (!selectedCoin) {
-    logger.error('No coin selected');
-    await ctx.reply('Error: No coin selected. Please try again.');
+  if (!watchlistService) {
+    logger.error('Watchlist service not properly injected');
+    await ctx.answerCbQuery('Service error. Please try again.');
     await ctx.scene.leave();
-    await showAlertsMenu(ctx);
-    return;
+    return showAlertsMenu(ctx);
   }
   
   try {
-    // Get the telegram ID
-    const telegramId = String(ctx.from?.id || '');
-    const isGroup = false; // Assume personal chat
+    // Get the selected watchlist using the correct method
+    const watchlist = await watchlistService.getWatchlistById(watchlistId);
     
-    // Show loading indicator while fetching watchlists
-    await withLoading(
-      ctx,
-      async () => {
-        // Get user's watchlists
-        const watchlists = await watchlistService.getWatchlists(telegramId, isGroup);
-        
-        if (watchlists.length === 0) {
-          logger.log('No watchlists found');
-          
-          // Show message that user has no watchlists
-          await ctx.reply(`You don't have any watchlists yet. Please create a watchlist first.`);
-          
-          // Provide buttons to create watchlist or cancel
-          const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('➕ Create Watchlist', 'create_watchlist')],
-            [createGoBackButton()]
-          ]);
-          
-          await ctx.reply('Choose an option:', {
-            reply_markup: keyboard.reply_markup
-          });
-          
-          return;
-        }
-        
-        // Build message with selected coin info
-        const messageText = `Selected coin: *${selectedCoin.name}* (${selectedCoin.symbol})\n\nChoose a watchlist to add the alert to:`;
-        
-        // Create buttons for each watchlist
-        const buttons = watchlists.map(watchlist => {
-          return [Markup.button.callback(
-            watchlist.name,
-            `select_watchlist_${watchlist.id}`
-          )];
-        });
-        
-        // Add back button
-        buttons.push([createGoBackButton()]);
-        
-        const keyboard = Markup.inlineKeyboard(buttons);
-        
-        await ctx.reply(messageText, {
-          reply_markup: keyboard.reply_markup,
-          parse_mode: 'Markdown'
-        });
-      },
-      {
-        messages: [
-          'Loading your watchlists...',
-          'Fetching watchlist data...',
-          'Getting your watchlist information...'
-        ],
-        emoji: '📋'
-      }
-    );
+    if (!watchlist) {
+      logger.error(`Watchlist not found with ID: ${watchlistId}`);
+      await ctx.answerCbQuery('Error: Watchlist not found');
+      return step3Watchlist(ctx);
+    }
+    
+    // Store the selected watchlist
+    ctx.wizard.state.parameters.selectedWatchlist = watchlist;
+    await ctx.answerCbQuery(`Selected watchlist: ${watchlist.name}`);
+    
+    // Proceed to notification type selection
+    return step4(ctx);
   } catch (error) {
-    logger.error(`Error showing watchlist selection: ${error.message}`);
-    await ctx.reply('Error loading watchlists. Please try again.');
-    await ctx.scene.leave();
-    await showAlertsMenu(ctx);
+    logger.error(`Error getting watchlist: ${error.message}`);
+    await ctx.answerCbQuery('Error retrieving watchlist');
+    return step3Watchlist(ctx);
   }
-}
+});
 
-/**
- * Helper function to set up a discovery alert
- */
-async function setupDiscoveryAlert(ctx: CustomContext): Promise<void> {
-  logger.log('Setting up discovery alert');
+// Coin search result selection
+createAlertWizard.action(/^alertcoinsearch_select_\w+$/, async (ctx) => {
+  logger.log('Coin selection action triggered');
   
-  // Store that this is a discovery alert
-  ctx.wizard.state.parameters.isDiscoveryAlert = true;
+  // Extract coin ID from callback data
+  const callbackData = ctx.callbackQuery && 'data' in ctx.callbackQuery 
+    ? (ctx.callbackQuery as any).data
+    : '';
   
-  // Build the message explaining discovery alerts
-  const messageText = `
-🔎 *Create Discovery Alert*
-
-Discovery alerts notify you about market-wide opportunities based on technical indicators, without selecting a specific coin.
-
-Select the type of discovery alert you want to create:
-`;
-
-  // Create buttons for each alert type
-  const buttons = [
-    [
-      Markup.button.callback('RSI Overbought', `alert_type_${AlertType.RSI_OVERBOUGHT}`),
-      Markup.button.callback('RSI Oversold', `alert_type_${AlertType.RSI_OVERSOLD}`)
-    ],
-    [
-      Markup.button.callback('MACD Crossover', `alert_type_${AlertType.MACD_CROSSOVER}`),
-      Markup.button.callback('MACD Crossunder', `alert_type_${AlertType.MACD_CROSSUNDER}`)
-    ],
-    [
-      Markup.button.callback('MA Crossover', `alert_type_${AlertType.MOVING_AVERAGE_CROSSOVER}`),
-      Markup.button.callback('MA Crossunder', `alert_type_${AlertType.MOVING_AVERAGE_CROSSUNDER}`)
-    ],
-    [createGoBackButton()]
-  ];
+  const coinId = callbackData.split('_').pop();
+  logger.log(`Selected coin ID: ${coinId}`);
   
-  const keyboard = Markup.inlineKeyboard(buttons);
+  // Find the selected coin in the results
+  const state = ctx.wizard.state.parameters.coinSearchState as CoinSearchState;
+  const selectedCoin = state?.results?.find(r => r.coin.id === coinId)?.coin;
   
-  await ctx.reply(messageText, {
-    reply_markup: keyboard.reply_markup,
-    parse_mode: 'Markdown'
-  });
-}
-
-/**
- * Helper function to show alert type options for watchlist alerts
- */
-async function showAlertTypeOptions(ctx: CustomContext): Promise<void> {
-  logger.log('Showing alert type options');
-  
-  const selectedCoin = ctx.wizard.state.parameters.selectedCoin;
-  const selectedWatchlistName = ctx.wizard.state.parameters.selectedWatchlistName;
-  
-  if (!selectedCoin || !selectedWatchlistName) {
-    logger.error('Missing coin or watchlist data');
-    await ctx.reply('Error: Missing required information. Please try again.');
-    await ctx.scene.leave();
-    await showAlertsMenu(ctx);
-    return;
-  }
-  
-  // Build the message
-  const messageText = `
-📋 *Create Alert for ${selectedCoin.name}*
-Watchlist: ${selectedWatchlistName}
-
-Select the type of alert you want to create:
-`;
-
-  // Create buttons for each alert type
-  const buttons = [
-    [
-      Markup.button.callback('Price Above', `alert_type_${AlertType.PRICE_UP}`),
-      Markup.button.callback('Price Below', `alert_type_${AlertType.PRICE_DOWN}`)
-    ],
-    [
-      Markup.button.callback('Price Up %', `alert_type_${AlertType.PRICE_PERCENTAGE_UP}`),
-      Markup.button.callback('Price Down %', `alert_type_${AlertType.PRICE_PERCENTAGE_DOWN}`)
-    ],
-    [
-      Markup.button.callback('Volume Above', `alert_type_${AlertType.VOLUME_UP}`),
-      Markup.button.callback('Volume Below', `alert_type_${AlertType.VOLUME_DOWN}`)
-    ],
-    [createGoBackButton()]
-  ];
-  
-  const keyboard = Markup.inlineKeyboard(buttons);
-  
-  await ctx.reply(messageText, {
-    reply_markup: keyboard.reply_markup,
-    parse_mode: 'Markdown'
-  });
-}
-
-/**
- * Helper function to show threshold input
- */
-async function showThresholdInput(ctx: CustomContext): Promise<void> {
-  logger.log('Showing threshold input');
-  
-  const parameters = ctx.wizard.state.parameters;
-  const alertTypeName = AlertService.getAlertTypeName(parameters.alertType);
-  
-  let promptText = '';
-  let placeholderText = '';
-  
-  // Customize prompt based on alert type
-  if (parameters.isDiscoveryAlert) {
-    if (parameters.alertType.includes('RSI')) {
-      promptText = `*Enter RSI Threshold*\n\nEnter a value between 0-100:\n• RSI Overbought: typically 70-80\n• RSI Oversold: typically 20-30`;
-      placeholderText = parameters.alertType === AlertType.RSI_OVERBOUGHT ? '70' : '30';
-    } else if (parameters.alertType.includes('MACD')) {
-      promptText = `*Enter MACD Threshold*\n\nEnter a sensitivity value (typically between 0.1-2):`;
-      placeholderText = '0.5';
-    } else {
-      promptText = `*Enter Moving Average Threshold*\n\nEnter a threshold value:`;
-      placeholderText = '0.2';
-    }
-  } else {
-    if (parameters.alertType.includes('PRICE_UP') || parameters.alertType.includes('PRICE_DOWN')) {
-      promptText = `*Enter ${alertTypeName} Threshold*\n\nEnter the price value:`;
-      placeholderText = parameters.alertType.includes('PERCENTAGE') ? '5' : '1000';
-    } else {
-      promptText = `*Enter ${alertTypeName} Threshold*\n\nEnter the volume value:`;
-      placeholderText = '1000000';
-    }
-  }
-  
-  // Add instruction for text input
-  promptText += `\n\nType your value and then press the Submit button.`;
-  
-  // Create custom keyboard with submit button
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('Submit', 'threshold_submit')],
-    [createGoBackButton()]
-  ]);
-  
-  await ctx.reply(promptText, {
-    reply_markup: keyboard.reply_markup,
-    parse_mode: 'Markdown'
-  });
-  
-  // Set up text input handler for the threshold
-  ctx.wizard.state.parameters.awaitingThreshold = true;
-}
-
-/**
- * Helper function to show timeframe options
- */
-async function showTimeframeOptions(ctx: CustomContext): Promise<void> {
-  logger.log('Showing timeframe options');
-  
-  const parameters = ctx.wizard.state.parameters;
-  
-  // Build the message
-  let messageText = parameters.isDiscoveryAlert
-    ? `*Select Timeframe for ${AlertService.getAlertTypeName(parameters.alertType)}*\n\nThreshold: ${parameters.threshold}`
-    : `*Select Timeframe for ${parameters.selectedCoin.name}*\n\nAlert Type: ${AlertService.getAlertTypeName(parameters.alertType)}\nThreshold: ${parameters.threshold}`;
+  if (selectedCoin) {
+    // Store the selection
+    logger.log(`Found selected coin: ${selectedCoin.name}`);
+    ctx.wizard.state.parameters.selectedCoin = selectedCoin;
     
-  // Create buttons for each timeframe
-  const buttons = [
-    [
-      
-      Markup.button.callback('1h', `timeframe_${TimeFrame.H1}`),
-      Markup.button.callback('4h', `timeframe_${TimeFrame.H4}`),
-      Markup.button.callback('6h', `timeframe_${TimeFrame.H6}`)
-    ],
-    [
-      Markup.button.callback('12h', `timeframe_${TimeFrame.H12}`),
-      Markup.button.callback('1d', `timeframe_${TimeFrame.D1}`),
-      Markup.button.callback('1w', `timeframe_${TimeFrame.W1}`)
-    ],
-    [createGoBackButton()]
-  ];
-  
-  const keyboard = Markup.inlineKeyboard(buttons);
-  
-  await ctx.reply(messageText, {
-    reply_markup: keyboard.reply_markup,
-    parse_mode: 'Markdown'
-  });
-}
-
-/**
- * Helper function to show pairing options
- */
-async function showPairingOptions(ctx: CustomContext): Promise<void> {
-  logger.log('Showing pairing options');
-  
-  const parameters = ctx.wizard.state.parameters;
-  
-  // Build the message
-  let messageText = parameters.isDiscoveryAlert
-    ? `*Select Pairing for ${AlertService.getAlertTypeName(parameters.alertType)}*\n\nThreshold: ${parameters.threshold}\nTimeframe: ${AlertService.getTimeFrameName(parameters.timeframe)}`
-    : `*Select Pairing for ${parameters.selectedCoin.name}*\n\nAlert Type: ${AlertService.getAlertTypeName(parameters.alertType)}\nThreshold: ${parameters.threshold}\nTimeframe: ${AlertService.getTimeFrameName(parameters.timeframe)}`;
+    // Notify the user
+    await ctx.answerCbQuery(`Selected ${selectedCoin.name} (${selectedCoin.symbol})`);
     
-  // Create buttons for each pairing
-  const buttons = [
-    [
-      Markup.button.callback('USD', `pairing_${Pairing.USD}`),
-      Markup.button.callback('BTC', `pairing_${Pairing.BTC}`),
-      Markup.button.callback('ETH', `pairing_${Pairing.ETH}`)
-    ],
-    [createGoBackButton()]
-  ];
-  
-  const keyboard = Markup.inlineKeyboard(buttons);
-  
-  await ctx.reply(messageText, {
-    reply_markup: keyboard.reply_markup,
-    parse_mode: 'Markdown'
-  });
-}
-
-/**
- * Helper function to show alert message input
- */
-async function showAlertMessageInput(ctx: CustomContext): Promise<void> {
-  logger.log('Showing alert message input');
-  
-  const parameters = ctx.wizard.state.parameters;
-  
-  // Build the message
-  let messageText = parameters.isDiscoveryAlert
-    ? `*Enter Alert Message (Optional)*\n\nType: ${AlertService.getAlertTypeName(parameters.alertType)}\nThreshold: ${parameters.threshold}\nTimeframe: ${AlertService.getTimeFrameName(parameters.timeframe)}\nPairing: ${parameters.pairing}\n\nYou can enter a custom message that will be sent when the alert triggers, or press Skip to use the default message.`
-    : `*Enter Alert Message (Optional)*\n\nCoin: ${parameters.selectedCoin.name}\nType: ${AlertService.getAlertTypeName(parameters.alertType)}\nThreshold: ${parameters.threshold}\nTimeframe: ${AlertService.getTimeFrameName(parameters.timeframe)}\nPairing: ${parameters.pairing}\n\nYou can enter a custom message that will be sent when the alert triggers, or press Skip to use the default message.`;
-    
-  // Create keyboard with skip and back buttons
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('Skip', 'message_submit')],
-    [createGoBackButton()]
-  ]);
-  
-  await ctx.reply(messageText, {
-    reply_markup: keyboard.reply_markup,
-    parse_mode: 'Markdown'
-  });
-  
-  // Set up handler for alert message text
-  ctx.wizard.state.parameters.awaitingAlertMessage = true;
-  
-
-}
-
-/**
- * Helper function to show alert confirmation
- */
-async function showAlertConfirmation(ctx: CustomContext): Promise<void> {
-  logger.log('Showing alert confirmation');
-  
-  const parameters = ctx.wizard.state.parameters;
-  
-  // Build the confirmation message
-  let messageText = '';
-  
-  if (parameters.isDiscoveryAlert) {
-    messageText = `
-🔔 *Confirm Discovery Alert*
-
-Type: ${AlertService.getAlertTypeName(parameters.alertType)}
-Threshold: ${parameters.threshold}
-Timeframe: ${AlertService.getTimeFrameName(parameters.timeframe)}
-Pairing: ${parameters.pairing}
-${parameters.alertMessage ? `Message: "${parameters.alertMessage}"` : ''}
-
-Are you sure you want to create this alert?
-`;
-  } else {
-    messageText = `
-🔔 *Confirm Alert*
-
-Coin: ${parameters.selectedCoin.name} (${parameters.selectedCoin.symbol})
-Watchlist: ${parameters.selectedWatchlistName}
-Type: ${AlertService.getAlertTypeName(parameters.alertType)}
-Threshold: ${parameters.threshold}
-Timeframe: ${AlertService.getTimeFrameName(parameters.timeframe)}
-Pairing: ${parameters.pairing}
-${parameters.alertMessage ? `Message: "${parameters.alertMessage}"` : ''}
-
-Are you sure you want to create this alert?
-`;
+    // Proceed to notification type selection
+    return step4(ctx);
   }
   
-  // Show confirmation dialog
-  await confirmationComponent.prompt(ctx, {
-    message: messageText,
-    confirmButtonText: '✅ Create Alert',
-    confirmCallbackData: 'create_alert_confirm',
-    parse_mode: 'Markdown'
-  });
-}
+  logger.error(`Coin not found with ID: ${coinId}`);
+  await ctx.answerCbQuery('Error: Coin not found');
+  return step3CoinResults(ctx);
+});
+
+// Coin search pagination handlers
+createAlertWizard.action(/^alertcoinsearch_next_\d+$/, async (ctx) => {
+  logger.log('Next page action triggered');
+  
+  // Get current state
+  const state = ctx.wizard.state.parameters.coinSearchState as CoinSearchState;
+  
+  if (!state) {
+    logger.error('Search state is missing');
+    return step3Coin(ctx);
+  }
+  
+  // Update page number
+  state.page += 1;
+  
+  // Update the state
+  ctx.wizard.state.parameters.coinSearchState = state;
+  
+  // Show updated results
+  await coinSearchComponent.showResults(ctx, state, 'alertcoinsearch');
+  
+  await ctx.answerCbQuery();
+});
+
+createAlertWizard.action(/^alertcoinsearch_prev_\d+$/, async (ctx) => {
+  logger.log('Previous page action triggered');
+  
+  // Get current state
+  const state = ctx.wizard.state.parameters.coinSearchState as CoinSearchState;
+  
+  if (!state) {
+    logger.error('Search state is missing');
+    return step3Coin(ctx);
+  }
+  
+  // Update page number (ensure it doesn't go below 1)
+  state.page = Math.max(1, state.page - 1);
+  
+  // Update the state
+  ctx.wizard.state.parameters.coinSearchState = state;
+  
+  // Show updated results
+  await coinSearchComponent.showResults(ctx, state, 'alertcoinsearch');
+  
+  await ctx.answerCbQuery();
+});
+
+// Notification type selection handlers
+createAlertWizard.action('notification_type_horizon', async (ctx) => {
+  ctx.wizard.state.parameters = { 
+    ...ctx.wizard.state.parameters, 
+    notificationType: AlertNotificationType.HORIZON_SCORE
+  };
+  await ctx.answerCbQuery('Selected: Horizon Score');
+  
+  // Skip indicator selection and go directly to pair selection
+  return step6(ctx);
+});
+
+createAlertWizard.action('notification_type_indicators', async (ctx) => {
+  ctx.wizard.state.parameters = { 
+    ...ctx.wizard.state.parameters, 
+    notificationType: AlertNotificationType.INDIVIDUAL_INDICATORS
+  };
+  await ctx.answerCbQuery('Selected: Indicators');
+  
+  // Go to indicator selection step
+  return step5Indicators(ctx);
+});
