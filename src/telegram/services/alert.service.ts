@@ -1,22 +1,24 @@
 // src/telegram/services/alert.service.ts
 import { Injectable, Logger } from '@nestjs/common';
-import { OptionsType } from './options.service';
 
-// Alert type definitions
+// Simplified Alert type definitions
 export interface AlertLimits {
   watchlistLimit: number;
   discoveryLimit: number;
   indicatorLimit: number;
+  priceLevelLimit: number;
 }
 
 export enum AlertType {
   WATCHLIST = 'watchlist',
-  DISCOVERY = 'discovery'
+  DISCOVERY = 'discovery',
+  PRICE_LEVEL = 'price_level'
 }
 
 export enum AlertNotificationType {
   HORIZON_SCORE = 'horizon_score',
-  INDIVIDUAL_INDICATORS = 'individual_indicators'
+  INDIVIDUAL_INDICATORS = 'individual_indicators',
+  PRICE_BREAK = 'price_break'
 }
 
 export interface Coin {
@@ -26,7 +28,7 @@ export interface Coin {
 }
 
 export interface AlertConfig {
-  id?: string; // Auto-generated if not provided
+  id?: string;
   userId: string;
   name: string;
   type: AlertType;
@@ -44,9 +46,11 @@ export interface AlertsSummary {
   totalAlerts: number;
   watchlistAlerts: number;
   discoveryAlerts: number;
+  priceLevelAlerts: number;
   remaining: {
     watchlist: number;
     discovery: number;
+    priceLevel: number;
   };
 }
 
@@ -57,13 +61,9 @@ export class AlertService {
   private alertCounter = 1;
 
   constructor() {
-    // Initialize with some mock alerts for demonstration
     this.initializeMockAlerts();
   }
 
-  /**
-   * Initialize some mock alerts for demonstration
-   */
   private initializeMockAlerts(): void {
     const mockAlerts: AlertConfig[] = [
       {
@@ -77,7 +77,7 @@ export class AlertService {
         indicators: ["Trend Momentum", "Buying Pressure"],
         pairing: "USD",
         timeframe: "1D",
-        createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
+        createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
         active: true
       },
       {
@@ -90,25 +90,38 @@ export class AlertService {
         notificationType: AlertNotificationType.HORIZON_SCORE,
         pairing: "USD",
         timeframe: "6h",
-        createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
+        createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+        active: true
+      },
+      // Updated price level alerts with horizontal level breaks
+      {
+        id: `alert_${this.alertCounter++}`,
+        userId: "12345",
+        name: "BTC Price Breaks",
+        type: AlertType.PRICE_LEVEL,
+        targetId: "bitcoin",
+        targetName: "Bitcoin (BTC)",
+        notificationType: AlertNotificationType.PRICE_BREAK,
+        pairing: "USD",
+        timeframe: "1D",
+        createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
         active: true
       },
       {
         id: `alert_${this.alertCounter++}`,
         userId: "12345",
-        name: "Top 10 Watchlist Alert",
-        type: AlertType.WATCHLIST,
-        targetId: "watchlist_1",
-        targetName: "Top 10",
-        notificationType: AlertNotificationType.HORIZON_SCORE,
-        pairing: "BTC",
-        timeframe: "1W",
-        createdAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000), // 14 days ago
+        name: "ETH Price Breaks",
+        type: AlertType.PRICE_LEVEL,
+        targetId: "ethereum",
+        targetName: "Ethereum (ETH)",
+        notificationType: AlertNotificationType.PRICE_BREAK,
+        pairing: "USD",
+        timeframe: "1D",
+        createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
         active: true
       }
     ];
 
-    // Add mock alerts to the map
     mockAlerts.forEach(alert => {
       this.alerts.set(alert.id!, alert);
     });
@@ -116,13 +129,8 @@ export class AlertService {
     this.logger.log(`Initialized ${mockAlerts.length} mock alerts`);
   }
 
-  /**
-   * Create a new alert
-   * @param config Alert configuration
-   * @returns Created alert with generated ID
-   */
+  // Rest of the service methods remain the same
   async createAlert(config: Omit<AlertConfig, 'id' | 'createdAt'>): Promise<AlertConfig> {
-    // Generate unique ID if not provided
     const alertId = `alert_${this.alertCounter++}`;
     
     const newAlert: AlertConfig = {
@@ -132,67 +140,46 @@ export class AlertService {
       active: true
     };
     
-    // Store the alert
     this.alerts.set(alertId, newAlert);
     this.logger.log(`Created alert: ${alertId} - ${newAlert.name}`);
     
-    // Simulate API call
     await this.mockApiCall('createAlert', newAlert);
     
     return newAlert;
   }
 
-  /**
-   * Get all alerts for a user
-   * @param userId User ID
-   * @param type Optional filter by alert type
-   * @returns Array of alerts
-   */
   async getAlerts(userId: string, type?: AlertType): Promise<AlertConfig[]> {
-    // Simulate API call
     await this.mockApiCall('getAlerts', { userId, type });
     
-    // Filter alerts by userId and optional type
     return Array.from(this.alerts.values()).filter(alert => 
       alert.userId === userId && 
       (type === undefined || alert.type === type)
     );
   }
 
-  /**
-   * Get a summary of alerts for a user
-   * @param userId User ID
-   * @returns Summary of alerts counts and limits
-   */
   async getAlertsSummary(userId: string): Promise<AlertsSummary> {
-    // Get all alerts for the user
     const userAlerts = await this.getAlerts(userId);
     
-    // Count watchlist and discovery alerts
     const watchlistAlerts = userAlerts.filter(a => a.type === AlertType.WATCHLIST).length;
     const discoveryAlerts = userAlerts.filter(a => a.type === AlertType.DISCOVERY).length;
+    const priceLevelAlerts = userAlerts.filter(a => a.type === AlertType.PRICE_LEVEL).length;
     
-    // Get limits
     const limits = this.getAlertsLimits();
     
     return {
       totalAlerts: userAlerts.length,
       watchlistAlerts,
       discoveryAlerts,
+      priceLevelAlerts,
       remaining: {
         watchlist: limits.watchlistLimit - watchlistAlerts,
-        discovery: limits.discoveryLimit - discoveryAlerts
+        discovery: limits.discoveryLimit - discoveryAlerts,
+        priceLevel: limits.priceLevelLimit - priceLevelAlerts
       }
     };
   }
 
-  /**
-   * Delete an alert by ID
-   * @param alertId Alert ID
-   * @returns True if alert was deleted
-   */
   async deleteAlert(alertId: string): Promise<boolean> {
-    // Simulate API call
     await this.mockApiCall('deleteAlert', { alertId });
     
     const result = this.alerts.delete(alertId);
@@ -205,11 +192,6 @@ export class AlertService {
     return result;
   }
 
-  /**
-   * Toggle alert active status
-   * @param alertId Alert ID
-   * @returns Updated alert or null if not found
-   */
   async toggleAlertStatus(alertId: string): Promise<AlertConfig | null> {
     const alert = this.alerts.get(alertId);
     if (!alert) {
@@ -217,72 +199,27 @@ export class AlertService {
       return null;
     }
     
-    // Toggle status
     alert.active = !alert.active;
     this.alerts.set(alertId, alert);
     this.logger.log(`Toggle alert status: ${alertId} - now ${alert.active ? 'active' : 'inactive'}`);
     
-    // Simulate API call
     await this.mockApiCall('toggleAlert', { alertId, active: alert.active });
     
     return alert;
   }
 
-  /**
-   * Remove a specific indicator from an alert
-   * @param alertId Alert ID
-   * @param indicator Indicator name to remove
-   * @returns Updated alert or null if not found
-   */
-  async removeIndicator(alertId: string, indicator: string): Promise<AlertConfig | null> {
-    const alert = this.alerts.get(alertId);
-    if (!alert || !alert.indicators) {
-      this.logger.warn(`Alert not found or no indicators for removal: ${alertId}`);
-      return null;
-    }
-    
-    // Remove the indicator
-    alert.indicators = alert.indicators.filter(ind => ind !== indicator);
-    
-    // If no indicators left and type is INDIVIDUAL_INDICATORS, delete the alert
-    if (alert.indicators.length === 0 && 
-        alert.notificationType === AlertNotificationType.INDIVIDUAL_INDICATORS) {
-      await this.deleteAlert(alertId);
-      return null;
-    }
-    
-    // Otherwise update the alert
-    this.alerts.set(alertId, alert);
-    this.logger.log(`Removed indicator ${indicator} from alert: ${alertId}`);
-    
-    // Simulate API call
-    await this.mockApiCall('removeIndicator', { alertId, indicator });
-    
-    return alert;
-  }
-
-  /**
-   * Get alert limits
-   * @returns Alert limits configuration
-   */
   getAlertsLimits(): AlertLimits {
     return {
       watchlistLimit: 10,
       discoveryLimit: 5,
-      indicatorLimit: 3
+      indicatorLimit: 3,
+      priceLevelLimit: 15
     };
   }
 
-  /**
-   * Mock API call for testing
-   * @param endpoint API endpoint
-   * @param data Data to send
-   * @returns Mock response
-   */
   private async mockApiCall(endpoint: string, data: any): Promise<any> {
     this.logger.debug(`API call to ${endpoint} with data:`, data);
     
-    // Simulate network delay
     await new Promise(resolve => setTimeout(resolve, 500));
     
     return { success: true, timestamp: new Date().toISOString() };

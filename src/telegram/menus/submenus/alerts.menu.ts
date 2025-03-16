@@ -167,12 +167,12 @@ export function registerAlertsMenuHandlers(bot: any, alertService: AlertService)
     await showAlertSettings(ctx, alertService);
   });
   
-  // Show all alerts (uses the new modular wizard system)
+  // Show all alerts (combines watchlist and discovery)
   bot.action('show_all_alerts', async (ctx: CustomContext) => {
     logger.log('Show all alerts action triggered');
     // Inject alert service into context
     (ctx as any).alertService = alertService;
-    await ctx.scene.enter('show-alerts-wizard');
+    await ctx.scene.enter('show-all-alerts-wizard');
   });
   
   // Create standard alert

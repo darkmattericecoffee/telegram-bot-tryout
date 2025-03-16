@@ -8,6 +8,7 @@ import { AlertService, AlertConfig, AlertType, AlertNotificationType } from 'src
 import { PaginationComponent } from 'src/telegram/components/pagination.component';
 import { showAlertsMenu } from 'src/telegram/menus/submenus/alerts.menu';
 
+
 // Create logger for wizard
 const logger = new Logger('ShowAllAlertsWizard');
 
@@ -88,7 +89,7 @@ Please select a category to view:
         Markup.button.callback('📋 Watchlist Alerts', 'show_watchlist_alerts')
       ],
       [
-        Markup.button.callback('📊 Horizon Level Breaks', 'show_horizon_breaks')
+        Markup.button.callback('💹 Price Level Alerts', 'show_price_level_breaks')
       ],
       [createGoBackButton()]
     ]);
@@ -277,21 +278,22 @@ async function showWatchlistAlerts(ctx: CustomContext) {
 }
 
 /**
- * Step 2C: Show horizon level breaks
+ * Step 2C: Show price level breaks
  */
-async function showHorizonBreaks(ctx: CustomContext) {
+async function showPriceLevelBreaks(ctx: CustomContext) {
   (ctx.wizard.state as WizardState).step = 2;
-  logger.log('Showing horizon level breaks');
+  logger.log('Showing price level breaks');
   
   const alerts = ctx.wizard.state.parameters.alerts || [];
   
-  // Filter for horizon score alerts
-  const horizonAlerts = alerts.filter(alert => 
-    alert.notificationType === AlertNotificationType.HORIZON_SCORE
+  // Filter for price level alerts
+  const priceLevelAlerts = alerts.filter(alert => 
+    alert.type === AlertType.PRICE_LEVEL && 
+    alert.notificationType === AlertNotificationType.PRICE_BREAK
   );
   
-  if (horizonAlerts.length === 0) {
-    await ctx.reply('You don\'t have any horizon level break alerts set up.', {
+  if (priceLevelAlerts.length === 0) {
+    await ctx.reply('You don\'t have any price level break alerts set up.', {
       reply_markup: Markup.inlineKeyboard([
         [Markup.button.callback('← Back', 'back_to_main')]
       ]).reply_markup
@@ -299,24 +301,42 @@ async function showHorizonBreaks(ctx: CustomContext) {
     return;
   }
   
-  // Create message
-  let messageText = `📊 *Horizon Level Break Alerts*\n\n`;
-  messageText += `You have ${horizonAlerts.length} horizon score alerts:\n\n`;
+  // Group alerts by coin
+  const coinGroups = {};
   
-  // Create buttons for each horizon alert
-  const alertButtons = horizonAlerts.map(alert => {
-    const typeEmoji = alert.type === AlertType.WATCHLIST ? '📋' : '🪙';
+  priceLevelAlerts.forEach(alert => {
+    if (!coinGroups[alert.targetId]) {
+      coinGroups[alert.targetId] = {
+        name: alert.targetName,
+        alerts: []
+      };
+    }
+    
+    coinGroups[alert.targetId].alerts.push(alert);
+  });
+  
+  // Store coin groups in state
+  ctx.wizard.state.parameters.priceLevelGroups = coinGroups;
+  
+  // Create message
+  let messageText = `💹 *Price Level Break Alerts*\n\n`;
+  messageText += `You have alerts for ${Object.keys(coinGroups).length} coins:\n\n`;
+  
+  // Create buttons for each coin
+  const coinButtons = Object.entries(coinGroups).map(([coinId, group]: [string, any]) => {
+    const coinName = group.name;
+    const alertCount = group.alerts.length;
     return [
       Markup.button.callback(
-        `${typeEmoji} ${alert.targetName} - ${alert.pairing}/${alert.timeframe}`, 
-        `view_alert_${alert.id}`
+        `${coinName} (${alertCount} alerts)`, 
+        `view_price_levels_${coinId}`
       )
     ];
   });
   
   // Add back button
   const buttons = [
-    ...alertButtons,
+    ...coinButtons,
     [Markup.button.callback('← Back', 'back_to_main')]
   ];
   
@@ -344,6 +364,16 @@ async function showHorizonBreaks(ctx: CustomContext) {
   
   await ctx.answerCbQuery();
 }
+
+/**
+ * Step 3C: Show price level details for a specific coin
+ */
+
+
+/**
+ * Step 4C: Show specific price level alert details
+ */
+
 
 /**
  * Step 3A: Show alerts for specific coin
@@ -837,8 +867,9 @@ showAllAlertsWizard.action('show_watchlist_alerts', async (ctx) => {
   await showWatchlistAlerts(ctx);
 });
 
-showAllAlertsWizard.action('show_horizon_breaks', async (ctx) => {
-  await showHorizonBreaks(ctx);
+// Add these to the action handlers
+showAllAlertsWizard.action('show_price_level_breaks', async (ctx) => {
+  await showPriceLevelBreaks(ctx);
 });
 
 showAllAlertsWizard.action('back_to_main', async (ctx) => {
@@ -954,91 +985,335 @@ showAllAlertsWizard.action(/^delete_alert_(\w+)$/, async (ctx) => {
   }
 });
 
-// Individual indicator deletion handlers
-showAllAlertsWizard.action(/^confirm_delete_indicator_(\w+)_(.+)$/, async (ctx) => {
+// ===== Price Level Handlers =====
+showAllAlertsWizard.action(/^view_price_levels_(\w+)$/, async (ctx) => {
   const callbackData = ctx.callbackQuery && 'data' in ctx.callbackQuery 
     ? (ctx.callbackQuery as any).data
     : '';
   
-  const match = callbackData.match(/confirm_delete_indicator_(\w+)_(.+)/);
-  if (!match) return step1(ctx);
+  const coinId = callbackData.match(/view_price_levels_(\w+)/)?.[1] || '';
+  logger.log(`View price levels action triggered for coin: ${coinId}`);
   
-  const alertId = match[1];
-  const indicator = decodeURIComponent(match[2]);
-  
-  logger.log(`Confirm delete indicator triggered for alert: ${alertId}, indicator: ${indicator}`);
-  
-  return confirmDeleteIndicator(ctx, alertId, indicator);
+  return showPriceLevelDetails(ctx, coinId);
 });
 
-showAllAlertsWizard.action(/^delete_indicator_(\w+)_(.+)$/, async (ctx) => {
+showAllAlertsWizard.action(/^view_price_level_(\w+)$/, async (ctx) => {
   const callbackData = ctx.callbackQuery && 'data' in ctx.callbackQuery 
     ? (ctx.callbackQuery as any).data
     : '';
   
-  const match = callbackData.match(/delete_indicator_(\w+)_(.+)/);
-  if (!match) return step1(ctx);
+  const alertId = callbackData.match(/view_price_level_(\w+)/)?.[1] || '';
+  logger.log(`View price level action triggered for alert: ${alertId}`);
   
-  const alertId = match[1];
-  const indicator = decodeURIComponent(match[2]);
-  
-  logger.log(`Delete indicator triggered for alert: ${alertId}, indicator: ${indicator}`);
-  
-  // Extract alert service from context or use singleton
+  return showPriceLevelAlertDetails(ctx, alertId);
+});
+
+// New function to show all coins with price level alerts
+async function showCoinsWithPriceLevels(ctx) {
+  const userId = "12345"; // Mock user ID for testing
   const alertService = (ctx as any).alertService || alertServiceInstance;
   
   try {
-    // Get the alert
-    const userId = "12345"; // Always use mock user ID for testing
-    const alerts = await alertService.getAlerts(userId);
-    const alert = alerts.find(a => a.id === alertId);
+    // Get all price level alerts for the user
+    const priceLevelAlerts = await alertService.getAlerts(userId, AlertType.PRICE_LEVEL);
     
-    if (!alert || !alert.indicators || !alert.indicators.includes(indicator)) {
-      await ctx.answerCbQuery('Error: Indicator not found');
+    // Group alerts by coin ID
+    const coinAlerts = new Map();
+    priceLevelAlerts.forEach(alert => {
+      if (!coinAlerts.has(alert.targetId)) {
+        coinAlerts.set(alert.targetId, {
+          id: alert.targetId,
+          name: alert.targetName,
+          alerts: []
+        });
+      }
+      coinAlerts.get(alert.targetId).alerts.push(alert);
+    });
+    
+    // Prepare message text
+    let messageText = "🔔 *Horizontal Level Break Alerts*\n\n";
+    
+    if (coinAlerts.size === 0) {
+      messageText += "You don't have any price break alerts set up yet.";
+    } else {
+      // List all coins with price level alerts
+      Array.from(coinAlerts.values()).forEach(coin => {
+        const activeAlerts = coin.alerts.filter(a => a.active).length;
+        if (activeAlerts > 0) {
+          messageText += `*${coin.name}*: Price break notifications ${activeAlerts > 0 ? '✅' : '❌'}\n`;
+        }
+      });
+    }
+    
+    // Create keyboard with coins
+    const keyboard = {
+      inline_keyboard: [
+        ...Array.from(coinAlerts.values()).map(coin => ([{
+          text: coin.name,
+          callback_data: `view_price_levels_${coin.id}`
+        }])),
+        [{ text: "« Back to Alerts", callback_data: "back_to_alerts" }]
+      ]
+    };
+    
+    await ctx.editMessageText(messageText, {
+      parse_mode: "Markdown",
+      reply_markup: keyboard
+    });
+    
+    return ctx.wizard.selectStep(ctx.wizard.cursor);
+  } catch (error) {
+    logger.error(`Error showing coins with price levels: ${error.message}`);
+    await ctx.reply("Error loading price break alerts. Please try again.");
+    return step1(ctx);
+  }
+}
+
+// Function to show price level alert details for a specific coin
+async function showPriceLevelDetails(ctx, coinId) {
+  const userId = "12345"; // Mock user ID for testing
+  const alertService = (ctx as any).alertService || alertServiceInstance;
+  
+  try {
+    // Get all price level alerts for the coin
+    const allAlerts = await alertService.getAlerts(userId, AlertType.PRICE_LEVEL);
+    const coinAlerts = allAlerts.filter(alert => alert.targetId === coinId);
+    
+    if (coinAlerts.length === 0) {
+      await ctx.answerCbQuery("No price break alerts found for this coin");
+      return showCoinsWithPriceLevels(ctx);
+    }
+    
+    // Get coin name from the first alert
+    const coinName = coinAlerts[0].targetName;
+    
+    // Prepare message text
+    let messageText = `🔔 *${coinName} Price Break Alerts*\n\n`;
+    
+    // Group by pairing/timeframe
+    const groupedAlerts = new Map();
+    coinAlerts.forEach(alert => {
+      const key = `${alert.pairing}-${alert.timeframe}`;
+      if (!groupedAlerts.has(key)) {
+        groupedAlerts.set(key, []);
+      }
+      groupedAlerts.get(key).push(alert);
+    });
+    
+    // Display alerts grouped by pairing/timeframe
+    Array.from(groupedAlerts.entries()).forEach(([key, alerts]) => {
+      const [pairing, timeframe] = key.split('-');
+      messageText += `*${pairing} (${timeframe})*\n`;
+      
+      alerts.forEach(alert => {
+        const status = alert.active ? "✅" : "❌";
+        messageText += `${status} Horizontal level breaks\n`;
+      });
+      
+      messageText += "\n";
+    });
+    
+    // Create keyboard with individual alert actions
+    const keyboard = {
+      inline_keyboard: [
+        ...coinAlerts.map(alert => {
+          const status = alert.active ? "✅" : "❌";
+          return [{
+            text: `${status} ${alert.pairing} (${alert.timeframe})`,
+            callback_data: `view_price_level_${alert.id}`
+          }];
+        }),
+        [{ text: "« Back to Coins", callback_data: "view_price_levels" }]
+      ]
+    };
+    
+    await ctx.editMessageText(messageText, {
+      parse_mode: "Markdown",
+      reply_markup: keyboard
+    });
+    
+    return ctx.wizard.selectStep(ctx.wizard.cursor);
+  } catch (error) {
+    logger.error(`Error showing price level details: ${error.message}`);
+    await ctx.reply("Error loading price break details. Please try again.");
+    return step1(ctx);
+  }
+}
+
+// Function to show details of a specific price level alert
+async function showPriceLevelAlertDetails(ctx, alertId) {
+  const userId = "12345"; // Mock user ID for testing
+  const alertService = (ctx as any).alertService || alertServiceInstance;
+  
+  try {
+    // Get all alerts for the user
+    const allAlerts = await alertService.getAlerts(userId);
+    const alert = allAlerts.find(a => a.id === alertId);
+    
+    if (!alert || alert.type !== AlertType.PRICE_LEVEL) {
+      await ctx.answerCbQuery("Alert not found");
+      return showCoinsWithPriceLevels(ctx);
+    }
+    
+    // Prepare message text
+    let messageText = `🔔 *Price Break Alert Details*\n\n`;
+    messageText += `*Coin:* ${alert.targetName}\n`;
+    messageText += `*Alert Type:* Horizontal level breaks\n`;
+    messageText += `*Market:* ${alert.pairing}\n`;
+    messageText += `*Timeframe:* ${alert.timeframe}\n`;
+    messageText += `*Status:* ${alert.active ? "Active ✅" : "Inactive ❌"}\n`;
+    messageText += `*Created:* ${alert.createdAt.toDateString()}\n\n`;
+    messageText += `You will be notified when price breaks through significant horizontal levels.`;
+    
+    // Create keyboard with actions
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { 
+            text: alert.active ? "Deactivate ❌" : "Activate ✅", 
+            callback_data: `toggle_alert_${alert.id}` 
+          },
+          { 
+            text: "Delete 🗑️", 
+            callback_data: `confirm_delete_alert_${alert.id}` 
+          }
+        ],
+        [{ 
+          text: "« Back to Coin", 
+          callback_data: `view_price_levels_${alert.targetId}` 
+        }]
+      ]
+    };
+    
+    await ctx.editMessageText(messageText, {
+      parse_mode: "Markdown",
+      reply_markup: keyboard
+    });
+    
+    return ctx.wizard.selectStep(ctx.wizard.cursor);
+  } catch (error) {
+    logger.error(`Error showing price level alert details: ${error.message}`);
+    await ctx.reply("Error loading alert details. Please try again.");
+    return step1(ctx);
+  }
+}
+
+// Handler for toggling alert status
+showAllAlertsWizard.action(/^toggle_alert_(\w+)$/, async (ctx) => {
+  const callbackData = ctx.callbackQuery && 'data' in ctx.callbackQuery 
+    ? (ctx.callbackQuery as any).data
+    : '';
+  
+  const alertId = callbackData.match(/toggle_alert_(\w+)/)?.[1] || '';
+  logger.log(`Toggle alert action triggered for alert: ${alertId}`);
+  
+  const alertService = (ctx as any).alertService || alertServiceInstance;
+  
+  try {
+    const alert = await alertService.toggleAlertStatus(alertId);
+    
+    if (!alert) {
+      await ctx.answerCbQuery("Error: Alert not found");
       return step1(ctx);
     }
     
-    // Remove the indicator from the alert
-    const updatedIndicators = alert.indicators.filter(ind => ind !== indicator);
+    await ctx.answerCbQuery(`Alert ${alert.active ? "activated" : "deactivated"} successfully`);
     
-    // If this was the last indicator, delete the entire alert
-    if (updatedIndicators.length === 0) {
-      const success = await alertService.deleteAlert(alertId);
-      
-      if (!success) {
-        await ctx.answerCbQuery('Error deleting alert');
-        return step1(ctx);
-      }
-      
-      await ctx.answerCbQuery('Alert deleted successfully (last indicator removed)');
-    } else {
-      // Otherwise update the alert with the remaining indicators
-      // Note: This is a mock implementation - in a real app you'd have an updateAlert method
-      alert.indicators = updatedIndicators;
-      await ctx.answerCbQuery(`Indicator ${indicator} removed successfully`);
+    // Return to alert details
+    return showPriceLevelAlertDetails(ctx, alertId);
+  } catch (error) {
+    logger.error(`Error toggling alert: ${error.message}`);
+    await ctx.answerCbQuery("Error updating alert");
+    return step1(ctx);
+  }
+});
+
+// Handler for confirming alert deletion
+showAllAlertsWizard.action(/^confirm_delete_alert_(\w+)$/, async (ctx) => {
+  const callbackData = ctx.callbackQuery && 'data' in ctx.callbackQuery 
+    ? (ctx.callbackQuery as any).data
+    : '';
+  
+  const alertId = callbackData.match(/confirm_delete_alert_(\w+)/)?.[1] || '';
+  logger.log(`Confirm delete alert triggered for alert: ${alertId}`);
+  
+  const userId = "12345"; // Mock user ID for testing
+  const alertService = (ctx as any).alertService || alertServiceInstance;
+  
+  try {
+    // Get the alert to find the coin ID
+    const allAlerts = await alertService.getAlerts(userId);
+    const alert = allAlerts.find(a => a.id === alertId);
+    
+    if (!alert) {
+      await ctx.answerCbQuery("Error: Alert not found");
+      return step1(ctx);
     }
     
-    // Refresh alerts and return to main menu
-    const updatedAlerts = await alertService.getAlerts(userId);
-    const summary = await alertService.getAlertsSummary(userId);
+    const coinId = alert.targetId;
     
-    ctx.wizard.state.parameters = {
-      ...ctx.wizard.state.parameters,
-      alerts: updatedAlerts,
-      summary,
-      selectedAlert: null,
-      selectedIndicator: null
+    // Create confirmation keyboard
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: "Yes, delete 🗑️", callback_data: `delete_alert_${alertId}` },
+          { text: "No, cancel", callback_data: `view_price_level_${alertId}` }
+        ]
+      ]
     };
     
-    // Return to the coin or watchlist view
-    if (alert.type === AlertType.WATCHLIST) {
-      return showWatchlistDetails(ctx, alert.targetId);
-    } else {
-      return showCoinDetails(ctx, alert.targetId);
-    }
+    await ctx.editMessageText(
+      `Are you sure you want to delete price break alerts for ${alert.targetName}?`,
+      { reply_markup: keyboard }
+    );
+    
+    return ctx.wizard.selectStep(ctx.wizard.cursor);
   } catch (error) {
-    logger.error(`Error deleting indicator: ${error.message}`);
-    await ctx.answerCbQuery('Error deleting indicator');
+    logger.error(`Error confirming delete: ${error.message}`);
+    await ctx.answerCbQuery("Error processing request");
+    return step1(ctx);
+  }
+});
+
+// Handler for deleting alert
+showAllAlertsWizard.action(/^delete_alert_(\w+)$/, async (ctx) => {
+  const callbackData = ctx.callbackQuery && 'data' in ctx.callbackQuery 
+    ? (ctx.callbackQuery as any).data
+    : '';
+  
+  const alertId = callbackData.match(/delete_alert_(\w+)/)?.[1] || '';
+  logger.log(`Delete alert triggered for alert: ${alertId}`);
+  
+  const userId = "12345"; // Mock user ID for testing
+  const alertService = (ctx as any).alertService || alertServiceInstance;
+  
+  try {
+    // Get the alert to find the coin ID
+    const allAlerts = await alertService.getAlerts(userId);
+    const alert = allAlerts.find(a => a.id === alertId);
+    
+    if (!alert) {
+      await ctx.answerCbQuery("Error: Alert not found");
+      return step1(ctx);
+    }
+    
+    const coinId = alert.targetId;
+    
+    // Delete the alert
+    const success = await alertService.deleteAlert(alertId);
+    
+    if (!success) {
+      await ctx.answerCbQuery("Error deleting alert");
+      return showPriceLevelAlertDetails(ctx, alertId);
+    }
+    
+    await ctx.answerCbQuery("Alert deleted successfully");
+    
+    // Return to coin details
+    return showPriceLevelDetails(ctx, coinId);
+  } catch (error) {
+    logger.error(`Error deleting alert: ${error.message}`);
+    await ctx.answerCbQuery("Error deleting alert");
     return step1(ctx);
   }
 });
