@@ -37,6 +37,7 @@ export class TelegramService implements OnModuleInit {
     // Alert wizard injections - refactored
     @Inject('CREATE_ALERT_WIZARD') private readonly createAlertWizard: any,
     @Inject('SHOW_ALL_ALERTS_WIZARD') private readonly showAllAlertsWizard: any,
+    @Inject('DISCOVERY_WIZARD') private readonly discoveryWizard: any,
   ) {
     this.bot = new Telegraf<CustomContext>(
       this.configService.get<string>('TELEGRAM_BOT_TOKEN') || '',
@@ -109,6 +110,7 @@ export class TelegramService implements OnModuleInit {
       // Alert wizards - refactored
       this.createAlertWizard,
       this.showAllAlertsWizard,
+      this.discoveryWizard,
     ]);
     
     // Add these new stage exit and enter middleware handlers after creating the stage
