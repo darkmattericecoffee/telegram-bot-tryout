@@ -1,3 +1,4 @@
+// Response Component
 import { CustomContext } from 'src/telegram/interfaces/custom-context.interface';
 
 export interface ResponseConfig {
@@ -11,7 +12,7 @@ export async function responseComponent(ctx: CustomContext, config: ResponseConf
     null,
     2
   )}`;
-
+  
   if (ctx.callbackQuery) {
     try {
       await ctx.editMessageText(messageText);

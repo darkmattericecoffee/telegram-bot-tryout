@@ -12,9 +12,10 @@ import { MultiPickerComponent, MultiPickerCallbackHandler, MultiPickerState } fr
 import { PairTimePickerComponent, PairTimePickerComponentCallbackHandler, PickerState } from 'src/telegram/components/pair-time-picker.component';
 import { OptionsService, OptionsType } from 'src/telegram/services/options.service';
 import { AlertService, AlertType, AlertNotificationType } from 'src/telegram/services/alert.service';
-import { showAlertsMenu } from 'src/telegram/menus/sub.menu/alerts.menu';
+import { showAlertsMenu } from 'src/telegram/menus/submenus/alerts.menu';
 import { WatchlistService } from 'src/telegram/services/watchlist.service';
 import { escapeMarkdown } from 'src/telegram/helpers/escape-markdown';
+import { sendAutoDeleteMessage } from 'src/telegram/components/auto-delete-message';
 // Create logger for wizard
 const logger = new Logger('CreateAlertWizard');
 
@@ -144,15 +145,17 @@ async function step4(ctx: CustomContext) {
   (ctx.wizard.state as WizardState).step = 4;
   logger.log('Entering step 4: Notification type selection');
   
-  // Notification type selection with shorter button text to avoid truncation
+  // Notification type selection with auto layout enabled
   const pickerConfig = {
     text: '📈 *Alert Type Selection*\n\nHow would you like to be notified?',
     options: [
       { label: '🌟 Horizon Score', action: 'notification_type_horizon' },
       { label: '📊 Indicators', action: 'notification_type_indicators' },
     ],
+    autoLayout: true, // Enable automatic layout detection (this is the default)
+    // You can optionally override with buttonsPerRow: 1 if you want to force horizontal layout
   };
-
+  
   await pickerComponent(ctx, pickerConfig);
 }
 
@@ -178,9 +181,10 @@ async function step5Indicators(ctx: CustomContext) {
     ctx.wizard.state.parameters.optionsLimit = 3; // Set maximum selection limit
     
     // Show the multi-picker with current selection
+    // The component will automatically determine the optimal layout
     const messageText = '📊 *Select Indicators*\n\nChoose up to 3 indicators for your alert:';
     const keyboard = multiPicker.render(
-      'alertmultipicker', 
+      'alertmultipicker',
       ctx.wizard.state.parameters.multiPickerState,
       options,
       ctx.wizard.state.parameters.optionsLimit
@@ -297,7 +301,7 @@ async function step7(ctx: CustomContext) {
     notificationInfo = `Notification: Indicators\nIndicators: ${indicators.length > 0 ? indicators.join(', ') : 'None'}`;
   }
   
-  // Build a summary message for confirmation
+  // Build a summary message for confirmation - using minimal escaping
   const confirmationMessage = `
 *Please confirm your alert settings:*
 
@@ -319,6 +323,7 @@ Are you sure you want to create this alert?
   });
 }
 
+
 // Final Step: Create Alert and Show Response
 async function finalStep(ctx: CustomContext) {
   (ctx.wizard.state as WizardState).step = 8;
@@ -326,7 +331,6 @@ async function finalStep(ctx: CustomContext) {
   
   // Extract alert service from context
   const alertService = (ctx as any).alertService as AlertService;
-  
   if (!alertService) {
     logger.error('Alert service not properly injected');
     await ctx.reply('An error occurred. Please try again later.');
@@ -335,8 +339,8 @@ async function finalStep(ctx: CustomContext) {
   }
   
   // Extract all parameters needed for alert creation
-  const { 
-    alertType, 
+  const {
+    alertType,
     alertName,
     notificationType,
     pickerState,
@@ -349,7 +353,6 @@ async function finalStep(ctx: CustomContext) {
   // Set target ID and name based on alert type
   let targetId = '';
   let targetName = '';
-  
   if (alertType === AlertType.WATCHLIST) {
     const watchlist = ctx.wizard.state.parameters.selectedWatchlist;
     targetId = watchlist.id;
@@ -361,7 +364,7 @@ async function finalStep(ctx: CustomContext) {
   }
   
   try {
-    console.log("About to create alert");
+    logger.log('About to create alert');
     const newAlert = await alertService.createAlert({
       userId,
       name: alertName,
@@ -369,35 +372,41 @@ async function finalStep(ctx: CustomContext) {
       targetId,
       targetName,
       notificationType,
-      indicators: notificationType === AlertNotificationType.INDIVIDUAL_INDICATORS 
-        ? multiPickerState?.selectedOptions || [] 
+      indicators: notificationType === AlertNotificationType.INDIVIDUAL_INDICATORS
+        ? multiPickerState?.selectedOptions || []
         : undefined,
       pairing: pickerState?.selectedPairing || 'USD',
       timeframe: pickerState?.selectedTimeframe || '1D',
       active: true
     });
     
-    console.log("Alert created successfully:", newAlert);
-    // Show success message
-    const responseText = `
-    ✅ *Alert Successfully Created!*
-    
-    Your alert "${escapeMarkdown(newAlert.name)}" has been set up and is now active. You will receive notifications based on your selected criteria.
-    
-    *Alert Details:*
-    - ID: ${newAlert.id}
-    - Target: ${escapeMarkdown(newAlert.targetName)}
-    - Timeframe: ${newAlert.timeframe}
-    - Created: ${newAlert.createdAt.toLocaleString()}
-    `;
+    logger.log("Alert created successfully:", newAlert);
 
-// Send without markdown parsing to avoid issues
-await ctx.reply(responseText);
+    const detailsMessage = `
+      ✅ *Alert Successfully Created!*
+
+Your alert "${escapeMarkdown(newAlert.name)}" has been set up and is now active. You will receive notifications based on your selected criteria.
+
+*Alert Details:*
+- ID: ${newAlert.id}
+- Target: ${escapeMarkdown(newAlert.targetName)}
+- Timeframe: ${newAlert.timeframe}
+- Created: ${newAlert.createdAt.toLocaleString()}
+`;
+
+    // Send auto-deleting message
+    await sendAutoDeleteMessage(
+      ctx,
+      detailsMessage,
+      { parse_mode: 'Markdown' },
+      2000
+    );
+  
+
     
     // Return to alerts menu
     await ctx.scene.leave();
     return showAlertsMenu(ctx);
-    
   } catch (error) {
     logger.error(`Error creating alert: ${error.message}`);
     await ctx.reply('An error occurred while creating your alert. Please try again.');
@@ -486,7 +495,7 @@ createAlertWizard.action(/^alertpicker_.+$/, async (ctx) => {
   return step6(ctx);
 });
 
-// Register confirmation handler
+
 registerConfirmationHandler(createAlertWizard, 'create_alert_confirm', async (ctx) => {
   (ctx.wizard.state as WizardState).step = 8;
   logger.log('Entering final step: Creating alert');
@@ -544,19 +553,26 @@ registerConfirmationHandler(createAlertWizard, 'create_alert_confirm', async (ct
       active: true
     });
     
-    // Show success message
+    // Show success message with auto-delete - using plain text instead of Markdown
     const responseText = `
 ✅ Alert Successfully Created!
 
-Your alert "${escapeMarkdown(newAlert.name)}" has been set up and is now active. You will receive notifications based on your selected criteria.
+Your alert "${newAlert.name}" has been set up and is now active. You will receive notifications based on your selected criteria.
 
 Alert Details:
 - ID: ${newAlert.id}
-- Target: ${escapeMarkdown(newAlert.targetName)}
+- Target: ${newAlert.targetName}
 - Timeframe: ${newAlert.timeframe}
 - Created: ${newAlert.createdAt.toLocaleString()}
     `;
-    await ctx.reply(responseText); // Send as plain text
+    
+    // Use sendAutoDeleteMessage WITHOUT Markdown parsing
+    await sendAutoDeleteMessage(
+      ctx,
+      responseText,
+      {}, // No Markdown parse mode
+      5000
+    );
 
     await ctx.scene.leave();
     return showAlertsMenu(ctx);

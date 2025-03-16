@@ -27,17 +27,8 @@ export class OptionsService {
     // Return different options based on the type
     switch (type) {
       case OptionsType.INDICATORS:
-        return ['RSI', 'ADX', 'Holistic', 'Price vs Trend', 'Price vs Volume', 'Dip', 'Pump'];
-      
-      case OptionsType.ALERTS:
-        return ['Price Alert', 'Volume Alert', 'Pattern Alert', 'Indicator Alert', 'News Alert'];
-      
-      case OptionsType.EXCHANGES:
-        return ['Binance', 'Coinbase', 'Kraken', 'Kucoin', 'Bitfinex', 'FTX', 'Huobi'];
-      
-      case OptionsType.STRATEGIES:
-        return ['Trend Following', 'Mean Reversion', 'Breakout', 'Range Trading', 'Arbitrage', 'Grid Trading'];
-
+        return ['Trend Momentum', 'Trend Strength', 'Price Path', 'Buying Pressure', 'Dominance', 'RSI'];
+    
       case OptionsType.MARKET_TRANSITIONS:
         return ['Bullish to Bearish', 'Bearish to Bullish', 'Super bullish to bullish'];
         case OptionsType.LEVEL_BREAKS:

@@ -1,15 +1,14 @@
-// src/telegram/components/confirmation.component.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { Markup } from 'telegraf';
 import { CustomContext } from '../interfaces/custom-context.interface';
-import { createGoBackButton } from '../constants/buttons.constant';
 import { escapeMarkdown } from '../helpers/escape-markdown';
+
 export interface ConfirmationConfig {
   message: string;
   confirmButtonText?: string;
   cancelButtonText?: string;
   confirmCallbackData?: string;
-  parse_mode?: string; // Add parse_mode to the interface
+  parse_mode?: string;
 }
 
 @Injectable()
@@ -37,7 +36,6 @@ export class ConfirmationComponent {
         Markup.button.callback(cancelButtonText, 'go_back')
       ]
     ];
-
     const keyboard = Markup.inlineKeyboard(buttons);
 
     // Send or edit message with the confirmation
@@ -59,7 +57,6 @@ export class ConfirmationComponent {
         parse_mode: parse_mode as any
       });
     }
-
     this.logger.log(`Prompted user for confirmation: ${message}`);
   }
 }
@@ -81,11 +78,9 @@ export function registerConfirmationHandler(
     if ((ctx.session as any).alertService && !(ctx as any).alertService) {
       (ctx as any).alertService = (ctx.session as any).alertService;
     }
-    
     if ((ctx.session as any).watchlistService && !(ctx as any).watchlistService) {
       (ctx as any).watchlistService = (ctx.session as any).watchlistService;
     }
-    
     await ctx.answerCbQuery('Confirmed');
     return nextStep(ctx);
   });

@@ -40,11 +40,81 @@ export interface AlertConfig {
   active: boolean;
 }
 
+export interface AlertsSummary {
+  totalAlerts: number;
+  watchlistAlerts: number;
+  discoveryAlerts: number;
+  remaining: {
+    watchlist: number;
+    discovery: number;
+  };
+}
+
 @Injectable()
 export class AlertService {
   private readonly logger = new Logger(AlertService.name);
   private alerts: Map<string, AlertConfig> = new Map();
   private alertCounter = 1;
+
+  constructor() {
+    // Initialize with some mock alerts for demonstration
+    this.initializeMockAlerts();
+  }
+
+  /**
+   * Initialize some mock alerts for demonstration
+   */
+  private initializeMockAlerts(): void {
+    const mockAlerts: AlertConfig[] = [
+      {
+        id: `alert_${this.alertCounter++}`,
+        userId: "12345",
+        name: "Bitcoin Alert",
+        type: AlertType.DISCOVERY,
+        targetId: "bitcoin",
+        targetName: "Bitcoin (BTC)",
+        notificationType: AlertNotificationType.INDIVIDUAL_INDICATORS,
+        indicators: ["Trend Momentum", "Buying Pressure"],
+        pairing: "USD",
+        timeframe: "1D",
+        createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
+        active: true
+      },
+      {
+        id: `alert_${this.alertCounter++}`,
+        userId: "12345",
+        name: "Ethereum Alert",
+        type: AlertType.DISCOVERY,
+        targetId: "ethereum",
+        targetName: "Ethereum (ETH)",
+        notificationType: AlertNotificationType.HORIZON_SCORE,
+        pairing: "USD",
+        timeframe: "6h",
+        createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
+        active: true
+      },
+      {
+        id: `alert_${this.alertCounter++}`,
+        userId: "12345",
+        name: "Top 10 Watchlist Alert",
+        type: AlertType.WATCHLIST,
+        targetId: "watchlist_1",
+        targetName: "Top 10",
+        notificationType: AlertNotificationType.HORIZON_SCORE,
+        pairing: "BTC",
+        timeframe: "1W",
+        createdAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000), // 14 days ago
+        active: true
+      }
+    ];
+
+    // Add mock alerts to the map
+    mockAlerts.forEach(alert => {
+      this.alerts.set(alert.id!, alert);
+    });
+
+    this.logger.log(`Initialized ${mockAlerts.length} mock alerts`);
+  }
 
   /**
    * Create a new alert
@@ -90,6 +160,33 @@ export class AlertService {
   }
 
   /**
+   * Get a summary of alerts for a user
+   * @param userId User ID
+   * @returns Summary of alerts counts and limits
+   */
+  async getAlertsSummary(userId: string): Promise<AlertsSummary> {
+    // Get all alerts for the user
+    const userAlerts = await this.getAlerts(userId);
+    
+    // Count watchlist and discovery alerts
+    const watchlistAlerts = userAlerts.filter(a => a.type === AlertType.WATCHLIST).length;
+    const discoveryAlerts = userAlerts.filter(a => a.type === AlertType.DISCOVERY).length;
+    
+    // Get limits
+    const limits = this.getAlertsLimits();
+    
+    return {
+      totalAlerts: userAlerts.length,
+      watchlistAlerts,
+      discoveryAlerts,
+      remaining: {
+        watchlist: limits.watchlistLimit - watchlistAlerts,
+        discovery: limits.discoveryLimit - discoveryAlerts
+      }
+    };
+  }
+
+  /**
    * Delete an alert by ID
    * @param alertId Alert ID
    * @returns True if alert was deleted
@@ -127,6 +224,39 @@ export class AlertService {
     
     // Simulate API call
     await this.mockApiCall('toggleAlert', { alertId, active: alert.active });
+    
+    return alert;
+  }
+
+  /**
+   * Remove a specific indicator from an alert
+   * @param alertId Alert ID
+   * @param indicator Indicator name to remove
+   * @returns Updated alert or null if not found
+   */
+  async removeIndicator(alertId: string, indicator: string): Promise<AlertConfig | null> {
+    const alert = this.alerts.get(alertId);
+    if (!alert || !alert.indicators) {
+      this.logger.warn(`Alert not found or no indicators for removal: ${alertId}`);
+      return null;
+    }
+    
+    // Remove the indicator
+    alert.indicators = alert.indicators.filter(ind => ind !== indicator);
+    
+    // If no indicators left and type is INDIVIDUAL_INDICATORS, delete the alert
+    if (alert.indicators.length === 0 && 
+        alert.notificationType === AlertNotificationType.INDIVIDUAL_INDICATORS) {
+      await this.deleteAlert(alertId);
+      return null;
+    }
+    
+    // Otherwise update the alert
+    this.alerts.set(alertId, alert);
+    this.logger.log(`Removed indicator ${indicator} from alert: ${alertId}`);
+    
+    // Simulate API call
+    await this.mockApiCall('removeIndicator', { alertId, indicator });
     
     return alert;
   }

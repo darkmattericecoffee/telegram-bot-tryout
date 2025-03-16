@@ -3,7 +3,7 @@ import { CustomContext, WizardState } from 'src/telegram/interfaces/custom-conte
 import { pickerComponent } from 'src/telegram/components/picker.component/picker.component';
 import { optionsComponent } from 'src/telegram/components/options.component/options.component';
 import { responseComponent } from 'src/telegram/components/response.component/response.component';
-import { showSubMenu } from 'src/telegram/menus/sub.menu/sub.menu';
+import { showSubMenu } from 'src/telegram/menus/submenus/sub.menu';
 import { PairTimePickerComponent, PairTimePickerComponentCallbackHandler, PickerState } from 'src/telegram/components/pair-time-picker.component';
 import { MultiPickerComponent, MultiPickerCallbackHandler, MultiPickerState } from 'src/telegram/components/multi-picker.component';
 import { OptionsService, OptionsType } from 'src/telegram/services/options.service';

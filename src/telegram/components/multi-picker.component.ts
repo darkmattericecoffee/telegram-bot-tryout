@@ -17,18 +17,41 @@ export class MultiPickerComponent {
    * @param {MultiPickerState} state - the currently selected values
    * @param {string[]} options - available options to display
    * @param {number} limit - maximum number of options that can be selected
+   * @param {number} buttonsPerRow - number of buttons per row (default: auto)
+   * @param {boolean} autoLayout - automatically determine layout based on text length (default: true)
    */
   public render(
     prefix = 'multipicker',
     state: MultiPickerState = { selectedOptions: [], type: 'default' },
     options: string[] = [],
-    limit: number = 3
+    limit: number = 3,
+    buttonsPerRow?: number,
+    autoLayout: boolean = true
   ): any {
     const selectedOptions = state.selectedOptions || [];
     
-    // Create buttons grid (3 buttons per row)
+    // Determine optimal buttons per row based on option text lengths if autoLayout is enabled
+    if (autoLayout && buttonsPerRow === undefined) {
+      // Consider the extra space needed for the checkmark emoji
+      const longestOptionLength = Math.max(...options.map(opt => opt.length)) + 2;
+      
+      // Choose layout based on option text length with conservative thresholds
+      if (longestOptionLength > 10) {
+        buttonsPerRow = 1; // Use horizontal layout (1 button per row) for long option texts
+      } else if (longestOptionLength > 6) {
+        buttonsPerRow = 2; // Use 2 buttons per row for medium length option texts
+      } else {
+        buttonsPerRow = 3; // Default layout (3 buttons per row)
+      }
+    }
+    
+    // Fallback to default if buttonsPerRow is still undefined
+    if (buttonsPerRow === undefined) {
+      buttonsPerRow = 3;
+    }
+    
+    // Create buttons grid with determined buttons per row
     const optionButtons: Array<Array<ReturnType<typeof Markup.button.callback>>> = [];
-    const buttonsPerRow = 3;
     
     for (let i = 0; i < options.length; i += buttonsPerRow) {
       const row: Array<ReturnType<typeof Markup.button.callback>> = [];

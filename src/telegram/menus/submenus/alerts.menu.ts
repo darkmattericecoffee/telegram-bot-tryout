@@ -3,58 +3,87 @@ import { Markup } from 'telegraf';
 import { CustomContext } from 'src/telegram/interfaces/custom-context.interface';
 import { createGoBackButton } from 'src/telegram/constants/buttons.constant';
 import { Logger } from '@nestjs/common';
-import { AlertService } from '../../services/alert.service';
+import { AlertService, AlertsSummary } from '../../services/alert.service';
 
 const logger = new Logger('AlertsMenu');
 
 /**
- * Shows the alerts submenu
+ * Shows the alerts submenu with summary info
  */
 export async function showAlertsMenu(ctx: CustomContext) {
   logger.log('Showing alerts menu');
   
-  const messageText = '🔔 *Alerts Menu*\n\nManage your cryptocurrency price and indicator alerts:';
-  const keyboard = Markup.inlineKeyboard([
-    [
-      Markup.button.callback('📋 My Alerts', 'show_all_alerts'),
-    ],
-    [
-      Markup.button.callback('➕ New Alert', 'create_alert'),
-      Markup.button.callback('🗑️ Delete Alert', 'delete_alert')
-    ],
-    [
-      Markup.button.callback('🔄 Market Transitions', 'create_market_transition_alert'),
-      Markup.button.callback('📊 Level Breaks', 'create_level_break_alert')
-    ],
-    [
-      Markup.button.callback('🔧 Alert Settings', 'alert_settings')
-    ],
-    [createGoBackButton()]
-  ]);
+  // Check if alert service is available
+  const alertService = (ctx as any).alertService as AlertService;
+  if (!alertService) {
+    logger.error('AlertService not available in context');
+    await ctx.reply('An error occurred. Please try again later.');
+    return;
+  }
   
-  if (ctx.callbackQuery) {
-    try {
-      await ctx.editMessageText(messageText, {
-        reply_markup: keyboard.reply_markup,
-        parse_mode: 'Markdown'
-      });
-    } catch (error) {
-      logger.error(`Error editing message: ${error.message}`);
+  try {
+    // Get user ID
+    const userId = ctx.from?.id.toString() || 'unknown';
+    
+    // Get summary of alerts
+    const summary: AlertsSummary = await alertService.getAlertsSummary(userId);
+    
+    // Create message with alert summary
+    const messageText = `
+    🔔 *Alerts Menu*
+
+    *🗂️ Overview*
+    • Total Active Alerts: ${summary.totalAlerts}
+    • Coin-Specific Alerts: ${summary.discoveryAlerts}
+    • Watchlist Alerts: ${summary.watchlistAlerts}
+
+    *⬇️ Alert Limits:*
+    • Coin-Specific Alerts: ${summary.remaining.discovery}/${alertService.getAlertsLimits().discoveryLimit} remaining
+    • Watchlist Alerts: ${summary.remaining.watchlist}/${alertService.getAlertsLimits().watchlistLimit} remaining
+
+    Manage your cryptocurrency price and indicator alerts below:`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('📋 Show All', 'show_all_alerts'),
+      ],
+      [
+        Markup.button.callback('➕ New Alert', 'create_alert'),
+        Markup.button.callback('🗑️ Delete Alert', 'delete_alert')
+      ],
+      [
+        Markup.button.callback('🔧 Alert Settings', 'alert_settings')
+      ],
+      [createGoBackButton()]
+    ]);
+    
+    if (ctx.callbackQuery) {
+      try {
+        await ctx.editMessageText(messageText, {
+          reply_markup: keyboard.reply_markup,
+          parse_mode: 'Markdown'
+        });
+      } catch (error) {
+        logger.error(`Error editing message: ${error.message}`);
+        await ctx.reply(messageText, {
+          reply_markup: keyboard.reply_markup,
+          parse_mode: 'Markdown'
+        });
+      }
+    } else {
       await ctx.reply(messageText, {
         reply_markup: keyboard.reply_markup,
         parse_mode: 'Markdown'
       });
     }
-  } else {
-    await ctx.reply(messageText, {
-      reply_markup: keyboard.reply_markup,
-      parse_mode: 'Markdown'
-    });
-  }
-  
-  // Answer callback query if this was triggered by a callback
-  if (ctx.callbackQuery) {
-    await ctx.answerCbQuery();
+    
+    // Answer callback query if this was triggered by a callback
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery();
+    }
+  } catch (error) {
+    logger.error(`Error showing alerts menu: ${error.message}`);
+    await ctx.reply('An error occurred while loading your alerts. Please try again.');
   }
 }
 
@@ -77,8 +106,6 @@ export async function showAlertSettings(ctx: CustomContext, alertService: AlertS
 *Alert Types Available:*
 • Horizon Score alerts (global trend indicator)
 • Individual indicator alerts (up to 3 indicators)
-• Market transition alerts (Bullish/Bearish shifts)
-• Support/Resistance level break alerts
 
 For custom alert requirements, please contact support.
 `;
@@ -129,6 +156,8 @@ export function registerAlertsMenuHandlers(bot: any, alertService: AlertService)
   // Show alerts submenu
   bot.action('alerts_submenu', async (ctx: CustomContext) => {
     logger.log('Alerts submenu action triggered');
+    // Inject alert service into context
+    (ctx as any).alertService = alertService;
     await showAlertsMenu(ctx);
   });
   
@@ -138,12 +167,12 @@ export function registerAlertsMenuHandlers(bot: any, alertService: AlertService)
     await showAlertSettings(ctx, alertService);
   });
   
-  // Show all alerts (combines watchlist and discovery)
+  // Show all alerts (uses the new modular wizard system)
   bot.action('show_all_alerts', async (ctx: CustomContext) => {
     logger.log('Show all alerts action triggered');
     // Inject alert service into context
     (ctx as any).alertService = alertService;
-    await ctx.scene.enter('show-all-alerts-wizard');
+    await ctx.scene.enter('show-alerts-wizard');
   });
   
   // Create standard alert
@@ -162,20 +191,6 @@ export function registerAlertsMenuHandlers(bot: any, alertService: AlertService)
     }
     
     await ctx.scene.enter('create-alert-wizard');
-  });
-  
-  // Create market transition alert
-  bot.action('create_market_transition_alert', async (ctx: CustomContext) => {
-    logger.log('Create market transition alert triggered');
-    await ctx.answerCbQuery('Market transition alert creation coming soon!');
-    await ctx.reply('The market transition alert creation feature is coming soon!');
-  });
-  
-  // Create level break alert
-  bot.action('create_level_break_alert', async (ctx: CustomContext) => {
-    logger.log('Create level break alert triggered');
-    await ctx.answerCbQuery('Level break alert creation coming soon!');
-    await ctx.reply('The level break alert creation feature is coming soon!');
   });
   
   // Delete alert

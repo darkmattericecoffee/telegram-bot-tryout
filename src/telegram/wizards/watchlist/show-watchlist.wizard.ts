@@ -3,11 +3,11 @@ import { Scenes } from 'telegraf';
 import { Logger } from '@nestjs/common';
 import { CustomContext } from '../../interfaces/custom-context.interface';
 import { WatchlistComponent } from '../../components/watchlist.component';
-import { showSuccessToast, showErrorToast } from '../../components/feedback.component';
+import { showSuccessToast, showErrorToast } from '../../components/toast.component';
 import { WatchlistService } from '../../services/watchlist.service';
 import { createGoBackButton } from '../../constants/buttons.constant';
 import { Markup } from 'telegraf';
-import { showWatchlistMenu } from '../../menus/sub.menu/watchlist.menu';
+import { showWatchlistMenu } from '../../menus/submenus/watchlist.menu';
 
 // Create logger
 const logger = new Logger('ShowWatchlistWizard');
