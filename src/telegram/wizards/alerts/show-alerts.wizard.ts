@@ -1123,7 +1123,7 @@ async function showPriceLevelDetails(ctx, coinId) {
             callback_data: `view_price_level_${alert.id}`
           }];
         }),
-        [{ text: "« Back to Coins", callback_data: "view_price_levels" }]
+        [{ text: "← Go Back", callback_data: "view_price_levels" }]
       ]
     };
     
@@ -1179,7 +1179,7 @@ async function showPriceLevelAlertDetails(ctx, alertId) {
           }
         ],
         [{ 
-          text: "« Back to Coin", 
+          text: "← Go Back", 
           callback_data: `view_price_levels_${alert.targetId}` 
         }]
       ]
