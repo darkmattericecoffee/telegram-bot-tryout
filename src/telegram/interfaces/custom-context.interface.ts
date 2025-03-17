@@ -8,6 +8,7 @@ export interface WizardState {
   parameters: Record<string, any>; // Store collected parameters
   coinSearchState?: CoinSearchState; // Added for coin search results
   pickerState?: PickerState;         // Added for the pair/time picker state
+  discoveryService?: any; // or type it as DiscoveryService if you import it here
 }
 
 export interface WizardSessionData extends Scenes.WizardSessionData {

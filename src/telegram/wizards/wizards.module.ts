@@ -1,10 +1,10 @@
-// src/telegram/wizards/wizards.module.ts
 import { Module } from '@nestjs/common';
 import { WatchlistWizardsModule } from './watchlist-wizards.module';
 import { AlertWizardsModule } from './alerts/alert-wizards.module';
+import { DiscoveryWizardsModule } from './discovery/discovery-wizard.module';
 
 @Module({
-  imports: [WatchlistWizardsModule, AlertWizardsModule],
-  exports: [WatchlistWizardsModule, AlertWizardsModule],
+  imports: [WatchlistWizardsModule, AlertWizardsModule, DiscoveryWizardsModule], 
+  exports: [WatchlistWizardsModule, AlertWizardsModule, DiscoveryWizardsModule], 
 })
 export class WizardsModule {}

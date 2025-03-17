@@ -14,7 +14,8 @@ export enum ActionButtonType {
   DEFAULT = 'default',
   TRADING = 'trading',
   NEWS = 'news',
-  CUSTOM = 'custom'
+  CUSTOM = 'custom',
+  ALERTS = 'alerts'
 }
 
 // Define button configuration interface
